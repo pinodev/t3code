@@ -94,6 +94,13 @@ function createProviderServiceHarness(
   const rollbackConversation = vi.fn(
     (_input: { readonly threadId: ThreadId; readonly numTurns: number }) => Effect.void,
   );
+  const forkConversation = vi.fn(
+    (_input: {
+      readonly threadId: ThreadId;
+      readonly forkThreadId: ThreadId;
+      readonly numTurns: number;
+    }) => Effect.void,
+  );
   const assertConversationRollbackSupported = vi.fn<
     ProviderServiceShape["assertConversationRollbackSupported"]
   >(() => Effect.void);
@@ -137,6 +144,7 @@ function createProviderServiceHarness(
         },
       }),
     rollbackConversation,
+    forkConversation,
     uploadFeedback: () => unsupported(),
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
@@ -151,6 +159,7 @@ function createProviderServiceHarness(
     service,
     assertConversationRollbackSupported,
     rollbackConversation,
+    forkConversation,
     emit,
   };
 }
@@ -1682,6 +1691,114 @@ describe("CheckpointReactor", () => {
       expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 2))).toBe(true);
     }),
   );
+
+  it("thread.fork copies the retained turns into a new thread and leaves the source alone", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: true });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const forkThreadId = ThreadId.make("thread-1-fork");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.history.import",
+        commandId: CommandId.make("cmd-history-import"),
+        threadId,
+        messages: [
+          {
+            messageId: MessageId.make("message-1"),
+            role: "user",
+            text: "first",
+            createdAt,
+          },
+          {
+            messageId: MessageId.make("message-2"),
+            role: "assistant",
+            text: "first answer",
+            createdAt,
+          },
+        ],
+      }),
+    );
+
+    for (const turn of [1, 2]) {
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.diff.complete",
+          commandId: CommandId.make(`cmd-diff-${turn}`),
+          threadId,
+          turnId: asTurnId(`turn-${turn}`),
+          completedAt: createdAt,
+          checkpointRef: checkpointRefForThreadTurn(threadId, turn),
+          status: "ready",
+          files: [],
+          checkpointTurnCount: turn,
+          createdAt,
+        }),
+      );
+    }
+    await waitForThread(harness.readModel, (thread) => thread.checkpoints.length === 2);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-thread-fork"),
+        threadId,
+        forkThreadId,
+        turnCount: 1,
+        createdAt,
+      }),
+    );
+    await harness.drain();
+
+    // The fork drops the turns after the fork point, so the provider is asked
+    // for a session without them.
+    expect(harness.provider.forkConversation).toHaveBeenCalledTimes(1);
+    expect(harness.provider.forkConversation).toHaveBeenCalledWith({
+      threadId,
+      forkThreadId,
+      numTurns: 1,
+    });
+
+    const snapshot = await harness.readModel();
+    const fork = snapshot.threads.find((entry) => entry.id === forkThreadId);
+    expect(fork?.title).toBe("Thread (fork)");
+    expect(fork?.messages.map((message) => message.text)).toEqual(["first", "first answer"]);
+
+    const source = snapshot.threads.find((entry) => entry.id === threadId);
+    expect(source?.checkpoints).toHaveLength(2);
+    expect(source?.messages).toHaveLength(2);
+    expect(source?.activities.filter((activity) => activity.kind === "thread.fork.failed")).toEqual(
+      [],
+    );
+  });
+
+  it("thread.fork reports a failure activity when the thread has no checkpointed turn", async () => {
+    const harness = await createHarness({ initializeGit: false, seedFilesystemCheckpoints: false });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-thread-fork-unsupported"),
+        threadId,
+        forkThreadId: ThreadId.make("thread-1-fork"),
+        turnCount: 1,
+        createdAt,
+      }),
+    );
+    await harness.drain();
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.kind === "thread.fork.failed"),
+    );
+    expect(thread.activities.some((activity) => activity.kind === "thread.fork.failed")).toBe(true);
+    expect(harness.provider.forkConversation).not.toHaveBeenCalled();
+    const snapshot = await harness.readModel();
+    expect(snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1-fork"))).toBe(
+      undefined,
+    );
+  });
 
   it.each([
     { commandType: "thread.checkpoint.revert", initializeGit: true },

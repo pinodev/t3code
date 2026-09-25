@@ -206,7 +206,7 @@ function decodeForEvent<A>(
   );
 }
 
-function retainThreadMessagesAfterRevert(
+export function retainThreadMessagesAfterRevert(
   messages: ReadonlyArray<OrchestrationMessage>,
   retainedTurnIds: ReadonlySet<string>,
   turnCount: number,

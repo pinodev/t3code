@@ -196,6 +196,7 @@ function buildProps() {
     onOpenTurnDiff: () => {},
     supportsConversationRollback: false,
     onRevertToTurnCount: () => {},
+    onForkFromTurnCount: () => {},
     isRevertingCheckpoint: false,
     onImageExpand: () => {},
     activeThreadEnvironmentId: ACTIVE_THREAD_ENVIRONMENT_ID,

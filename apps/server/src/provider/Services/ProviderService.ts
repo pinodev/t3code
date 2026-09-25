@@ -122,6 +122,19 @@ export interface ProviderServiceShape {
   }) => Effect.Effect<void, ProviderServiceError>;
 
   /**
+   * Fork a conversation into another thread, dropping its last N turns.
+   *
+   * Installs the forked resume cursor under `forkThreadId` and leaves the source
+   * session running. The fork's first turn picks the cursor up through the
+   * ordinary session start, so nothing is started here.
+   */
+  readonly forkConversation: (input: {
+    readonly threadId: ThreadId;
+    readonly forkThreadId: ThreadId;
+    readonly numTurns: number;
+  }) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
    * Upload a thread and return the provider's shareable feedback identifier.
    */
   readonly uploadFeedback: (

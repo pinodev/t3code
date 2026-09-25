@@ -124,6 +124,7 @@ import {
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
+  GitBranchPlusIcon,
   WrenchIcon,
   XIcon,
   ZapIcon,
@@ -267,6 +268,7 @@ interface TimelineRowSharedState {
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
+  onForkFromTurnCount: (targetTurnCount: number) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
@@ -406,6 +408,7 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   supportsConversationRollback: boolean;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
+  onForkFromTurnCount: (targetTurnCount: number) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -474,6 +477,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   supportsConversationRollback,
   onRevertToTurnCount,
+  onForkFromTurnCount,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
   isRevertingCheckpoint,
   onImageExpand,
@@ -925,6 +929,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertToTurnCount,
+      onForkFromTurnCount,
       onUseArtifactTemplate,
       onImageExpand,
       onFileOpen,
@@ -958,6 +963,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertToTurnCount,
+      onForkFromTurnCount,
       onUseArtifactTemplate,
       onImageExpand,
       onFileOpen,
@@ -1960,6 +1966,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {typeof revertTurnCount === "number" && (
               <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
             )}
+            {typeof revertTurnCount === "number" && (
+              <ForkUserMessageButton turnCount={revertTurnCount} />
+            )}
             {resolvedContext.text && (
               <MessageCopyButton
                 // Structured paste needs the canonical links to retain their positions.
@@ -2035,6 +2044,33 @@ function RevertUserMessageButton({
         <Undo2Icon className="size-3" />
       </TooltipTrigger>
       <TooltipPopup side="top">Edit from here</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+// Forking keeps this thread as it is: the turns up to here continue in a new
+// thread, so the fork point offered is the one rewind already computed.
+function ForkUserMessageButton({ turnCount }: { turnCount: number }) {
+  const ctx = use(TimelineRowCtx);
+  const activity = use(TimelineRowActivityCtx);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            disabled={activity.isRevertingCheckpoint || activity.isWorking}
+            onClick={() => ctx.onForkFromTurnCount(turnCount)}
+            aria-label="Fork from here"
+          />
+        }
+      >
+        <GitBranchPlusIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">Fork from here</TooltipPopup>
     </Tooltip>
   );
 }

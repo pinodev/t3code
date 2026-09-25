@@ -1808,6 +1808,37 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.fork": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // The event is on the source aggregate: the fork's own thread does not
+      // exist yet, and the reactor is what creates it.
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.forkThreadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.fork-requested",
+        payload: {
+          threadId: command.threadId,
+          forkThreadId: command.forkThreadId,
+          turnCount: command.turnCount,
+          ...(command.title !== undefined ? { title: command.title } : {}),
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
     case "thread.session.stop": {
       const thread = yield* requireThread({
         readModel,

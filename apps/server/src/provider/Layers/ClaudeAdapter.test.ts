@@ -6603,6 +6603,118 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("forks Claude history without touching the source session", () => {
+    const forkCalls: Array<Parameters<NonNullable<ClaudeAdapterLiveOptions["forkSession"]>>> = [];
+    let firstTurnId = "";
+    let secondTurnId = "";
+    const harness = makeHarness({
+      forkSession: async (...args) => {
+        forkCalls.push(args);
+        return { sessionId: CLAUDE_FORK_SESSION_ID };
+      },
+      getSessionMessages: async (sessionId) => {
+        if (sessionId === CLAUDE_FORK_SESSION_ID) {
+          return [
+            claudeHistoryMessage({
+              type: "user",
+              uuid: `fork-${firstTurnId}`,
+              sessionId,
+              content: "first",
+            }),
+            claudeHistoryMessage({ type: "assistant", uuid: "fork-assistant-1", sessionId }),
+          ];
+        }
+        return [
+          claudeHistoryMessage({ type: "user", uuid: firstTurnId, content: "first" }),
+          claudeHistoryMessage({ type: "assistant", uuid: "assistant-1" }),
+          claudeHistoryMessage({ type: "user", uuid: secondTurnId, content: "second" }),
+          claudeHistoryMessage({ type: "assistant", uuid: "assistant-2" }),
+        ];
+      },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      firstTurnId = (yield* sendCompletedClaudeTurn(adapter, harness, session.threadId, "first"))
+        .turnId;
+      secondTurnId = (yield* sendCompletedClaudeTurn(adapter, harness, session.threadId, "second"))
+        .turnId;
+
+      const fork = yield* adapter.forkThread!(session.threadId, 1);
+
+      assert.deepEqual(fork, {
+        resume: CLAUDE_FORK_SESSION_ID,
+        turnCount: 1,
+        turnStartMessageIds: [`fork-${firstTurnId}`],
+      });
+      assert.deepEqual(forkCalls, [[CLAUDE_ORIGINAL_SESSION_ID, { upToMessageId: "assistant-1" }]]);
+      // The source keeps both turns and its own session: only the cursor handed
+      // back describes the fork.
+      const sourceSnapshot = yield* adapter.readThread(session.threadId);
+      assert.equal(sourceSnapshot.turns.length, 2);
+      assert.deepEqual((yield* adapter.listSessions())[0]?.resumeCursor, {
+        threadId: session.threadId,
+        resume: CLAUDE_ORIGINAL_SESSION_ID,
+        turnCount: 2,
+        turnStartMessageIds: [firstTurnId, secondTurnId],
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("forks the whole conversation when no turn is dropped", () => {
+    const forkCalls: Array<Parameters<NonNullable<ClaudeAdapterLiveOptions["forkSession"]>>> = [];
+    let firstTurnId = "";
+    const harness = makeHarness({
+      forkSession: async (...args) => {
+        forkCalls.push(args);
+        return { sessionId: CLAUDE_FORK_SESSION_ID };
+      },
+      getSessionMessages: async (sessionId) => {
+        if (sessionId === CLAUDE_FORK_SESSION_ID) {
+          return [
+            claudeHistoryMessage({
+              type: "user",
+              uuid: `fork-${firstTurnId}`,
+              sessionId,
+              content: "first",
+            }),
+            claudeHistoryMessage({ type: "assistant", uuid: "fork-assistant-1", sessionId }),
+          ];
+        }
+        return [
+          claudeHistoryMessage({ type: "user", uuid: firstTurnId, content: "first" }),
+          claudeHistoryMessage({ type: "assistant", uuid: "assistant-1" }),
+        ];
+      },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      firstTurnId = (yield* sendCompletedClaudeTurn(adapter, harness, session.threadId, "first"))
+        .turnId;
+
+      const fork = yield* adapter.forkThread!(session.threadId, 0);
+
+      assert.equal(fork.turnCount, 1);
+      // Nothing is removed, so the cut is the end of the transcript.
+      assert.deepEqual(forkCalls, [[CLAUDE_ORIGINAL_SESSION_ID, { upToMessageId: "assistant-1" }]]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("rewinds Claude history when the fork inserts extra system messages", () => {
     let firstTurnId = "";
     let secondTurnId = "";

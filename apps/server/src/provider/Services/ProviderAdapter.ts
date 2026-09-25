@@ -64,6 +64,18 @@ export interface ProviderThreadSnapshot {
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
 }
 
+/**
+ * Resume cursor for a forked conversation, installed on the fork's thread.
+ *
+ * Shaped like the cursor a session already persists, so the fork's first turn
+ * resumes through the ordinary start path with no special case.
+ */
+export interface ProviderConversationFork {
+  readonly resume: string;
+  readonly turnCount: number;
+  readonly turnStartMessageIds: ReadonlyArray<string | null>;
+}
+
 export interface ProviderAdapterShape<TError> {
   /**
    * Provider kind implemented by this adapter.
@@ -138,6 +150,18 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     numTurns: number,
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
+
+  /**
+   * Fork a provider conversation, dropping its last N turns, and return the
+   * resume cursor another thread can continue from.
+   *
+   * The source session is left untouched, which is what separates a fork from a
+   * rewind. Adapters whose provider cannot fork omit the method.
+   */
+  readonly forkThread?: (
+    threadId: ThreadId,
+    numTurns: number,
+  ) => Effect.Effect<ProviderConversationFork, TError>;
 
   /**
    * Upload a thread to the provider when the adapter supports feedback.

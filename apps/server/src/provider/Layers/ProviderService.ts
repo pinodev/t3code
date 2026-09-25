@@ -335,6 +335,12 @@ const ProviderRollbackConversationInput = Schema.Struct({
   numTurns: NonNegativeInt,
 });
 
+const ProviderForkConversationInput = Schema.Struct({
+  threadId: ThreadId,
+  forkThreadId: ThreadId,
+  numTurns: NonNegativeInt,
+});
+
 function toValidationError(
   operation: string,
   issue: string,
@@ -2253,6 +2259,62 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  const forkConversation: ProviderServiceMethod<"forkConversation"> = Effect.fn("forkConversation")(
+    function* (rawInput) {
+      const input = yield* decodeInputOrValidationError({
+        operation: "ProviderService.forkConversation",
+        schema: ProviderForkConversationInput,
+        payload: rawInput,
+      });
+      yield* assertConversationRollbackSupported(input.threadId);
+      const routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation: "ProviderService.forkConversation",
+        allowRecovery: true,
+      });
+      const forkThread = routed.adapter.forkThread;
+      if (!forkThread) {
+        return yield* toValidationError(
+          "ProviderService.forkConversation",
+          `Provider '${routed.adapter.provider}' does not support conversation fork.`,
+        );
+      }
+      yield* Effect.annotateCurrentSpan({
+        "provider.operation": "fork-conversation",
+        "provider.kind": routed.adapter.provider,
+        "provider.thread_id": input.threadId,
+        "provider.fork_thread_id": input.forkThreadId,
+        "provider.rollback_turns": input.numTurns,
+      });
+      const fork = yield* forkThread(routed.threadId, input.numTurns);
+      const sourceBinding = yield* directory.getBinding(input.threadId);
+      const cwd = Option.isSome(sourceBinding)
+        ? readPersistedCwd(sourceBinding.value.runtimePayload)
+        : undefined;
+      const runtimeMode = Option.isSome(sourceBinding)
+        ? sourceBinding.value.runtimeMode
+        : undefined;
+      // Install the cursor before the fork's thread exists, the way an imported
+      // session does. Insert-ignore so a real session that got there first wins.
+      yield* directory.upsert(
+        {
+          threadId: input.forkThreadId,
+          provider: routed.adapter.provider,
+          providerInstanceId: routed.instanceId,
+          status: "stopped",
+          ...(runtimeMode !== undefined ? { runtimeMode } : {}),
+          resumeCursor: { threadId: input.forkThreadId, ...fork },
+          ...(cwd !== undefined ? { runtimePayload: { cwd } } : {}),
+        },
+        { onConflict: "ignore" },
+      );
+      yield* analytics.record("provider.conversation.forked", {
+        provider: routed.adapter.provider,
+        turns: input.numTurns,
+      });
+    },
+  );
+
   const uploadFeedback: ProviderServiceMethod<"uploadFeedback"> = Effect.fn("uploadFeedback")(
     function* (rawInput) {
       const input = yield* decodeInputOrValidationError({
@@ -2411,6 +2473,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     getInstanceInfo,
     assertConversationRollbackSupported,
     rollbackConversation,
+    forkConversation,
     uploadFeedback,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each

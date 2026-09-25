@@ -28,6 +28,7 @@ import {
 } from "../../checkpointing/Utils.ts";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { retainThreadMessagesAfterRevert } from "../projector.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -112,6 +113,38 @@ const make = Effect.gen(function* () {
             tone: "error",
             kind: "checkpoint.revert.failed",
             summary: "Checkpoint revert failed",
+            payload: {
+              turnCount: input.turnCount,
+              detail: input.detail,
+            },
+            turnId: null,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
+
+  const appendForkFailureActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly turnCount: number;
+    readonly detail: string;
+    readonly createdAt: string;
+  }) =>
+    Effect.all({
+      commandId: serverCommandId("thread-fork-failure"),
+      activityId: serverEventId,
+    }).pipe(
+      Effect.flatMap(({ commandId, activityId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: activityId,
+            tone: "error",
+            kind: "thread.fork.failed",
+            summary: "Thread fork failed",
             payload: {
               turnCount: input.turnCount,
               detail: input.detail,
@@ -822,10 +855,110 @@ const make = Effect.gen(function* () {
       );
   });
 
+  // A fork keeps the source thread as it is and gives the retained turns to a new
+  // thread: the provider cursor first (before the thread is visible), then the
+  // thread, then the copied history.
+  const handleForkRequested = Effect.fn("handleForkRequested")(function* (
+    event: Extract<OrchestrationEvent, { type: "thread.fork-requested" }>,
+  ) {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const { threadId, forkThreadId, turnCount } = event.payload;
+    const failed = (detail: string) =>
+      appendForkFailureActivity({ threadId, turnCount, detail, createdAt: now }).pipe(
+        Effect.catch(() => Effect.void),
+      );
+
+    const thread = yield* resolveThreadDetail(threadId);
+    if (!thread) {
+      yield* failed("Thread was not found in read model.");
+      return;
+    }
+
+    const currentTurnCount = thread.checkpoints.reduce(
+      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
+      0,
+    );
+    // Turns are counted with checkpoints, so a thread outside a git workspace has
+    // none and cannot be forked — the same rule rewind follows.
+    if (turnCount > currentTurnCount) {
+      yield* failed(`Fork turn count ${turnCount} exceeds current turn count ${currentTurnCount}.`);
+      return;
+    }
+
+    const outcome = yield* Effect.gen(function* () {
+      yield* providerService.forkConversation({
+        threadId,
+        forkThreadId,
+        numTurns: Math.max(0, currentTurnCount - turnCount),
+      });
+      yield* orchestrationEngine.dispatch({
+        type: "thread.create",
+        commandId: yield* serverCommandId("thread-fork-create"),
+        threadId: forkThreadId,
+        projectId: thread.projectId,
+        title: event.payload.title ?? `${thread.title} (fork)`,
+        modelSelection: thread.modelSelection,
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        createdAt: now,
+        historyImport: true,
+      });
+
+      const retainedTurnIds = new Set(
+        thread.checkpoints
+          .filter((checkpoint) => checkpoint.checkpointTurnCount <= turnCount)
+          .map((checkpoint) => checkpoint.turnId),
+      );
+      // User messages carry no turn id, so the retention rule `thread.reverted`
+      // uses is the only correct filter here; a naive turnId filter drops every
+      // prompt.
+      const retained = retainThreadMessagesAfterRevert(
+        thread.messages,
+        retainedTurnIds,
+        turnCount,
+      ).filter((message) => message.role === "user" || message.role === "assistant");
+      if (retained.length > 0) {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.history.import",
+          commandId: yield* serverCommandId("thread-fork-history"),
+          threadId: forkThreadId,
+          messages: retained.map((message, index) => ({
+            messageId: MessageId.make(`import:fork:${threadId}:${String(index).padStart(6, "0")}`),
+            role: message.role === "assistant" ? ("assistant" as const) : ("user" as const),
+            text: message.text,
+            createdAt: message.createdAt,
+          })),
+        });
+      }
+    }).pipe(Effect.result);
+
+    if (outcome._tag === "Failure") {
+      yield* failed(Cause.pretty(Cause.fail(outcome.failure)));
+    }
+  });
+
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (event: OrchestrationEvent) {
     if (event.type === "thread.turn-start-requested" || event.type === "thread.message-sent") {
       if (event.type === "thread.turn-start-requested") pending.add(event.payload.threadId);
       yield* ensurePreTurnBaselineFromDomainTurnStart(event);
+      return;
+    }
+
+    if (event.type === "thread.fork-requested") {
+      yield* handleForkRequested(event).pipe(
+        Effect.catch((error) =>
+          Effect.flatMap(nowIso, (createdAt) =>
+            appendForkFailureActivity({
+              threadId: event.payload.threadId,
+              turnCount: event.payload.turnCount,
+              detail: error.message,
+              createdAt,
+            }),
+          ),
+        ),
+      );
       return;
     }
 
@@ -942,7 +1075,8 @@ const make = Effect.gen(function* () {
         if (
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.message-sent" &&
-          event.type !== "thread.checkpoint-revert-requested"
+          event.type !== "thread.checkpoint-revert-requested" &&
+          event.type !== "thread.fork-requested"
         ) {
           return Effect.void;
         }

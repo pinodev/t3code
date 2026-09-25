@@ -1511,6 +1511,7 @@ export default function ChatView(props: ChatViewProps) {
   const revertThreadCheckpoint = useAtomCommand(threadEnvironment.revertCheckpoint, {
     reportFailure: false,
   });
+  const forkThread = useAtomCommand(threadEnvironment.fork, { reportFailure: false });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const { environments } = useEnvironments();
@@ -7030,6 +7031,46 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
+  // Forking leaves this thread alone and opens the fork, so the handler only
+  // dispatches and navigates; the server owns the history copy.
+  const onForkFromTurnCount = useCallback(
+    async (targetTurnCount: number) => {
+      if (!activeThread) return;
+      const environmentId = activeThread.environmentId;
+      const forkThreadId = newThreadId();
+      const result = await forkThread({
+        environmentId,
+        input: {
+          threadId: activeThread.id,
+          forkThreadId,
+          turnCount: targetTurnCount,
+          title: truncate(`${activeThread.title} (fork)`),
+        },
+      });
+      if (result._tag === "Failure") {
+        if (isAtomCommandInterrupted(result)) return;
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not fork this thread",
+            description:
+              error instanceof Error
+                ? error.message
+                : "An error occurred while forking the thread.",
+          }),
+        );
+        return;
+      }
+      await settlePromise(() =>
+        navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId, threadId: forkThreadId },
+        }),
+      );
+    },
+    [activeThread, forkThread, navigate],
+  );
   const onCompactContext = async () => {
     if (compactDisabled || !activeThread || !clientSettingsHydrated || sendInFlightRef.current) {
       return;
@@ -9035,6 +9076,12 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeThreadRef, isServerThread, onDiffPanelOpen],
   );
+  const onForkFromTurnCountRef = useRef(onForkFromTurnCount);
+  onForkFromTurnCountRef.current = onForkFromTurnCount;
+  const onForkTimelineTurn = useCallback((targetTurnCount: number) => {
+    void onForkFromTurnCountRef.current(targetTurnCount);
+  }, []);
+
   // The revert handler is read from a ref at call-time so the callback
   // reference is fully stable and never busts TimelineRowCtx identity.
   const onRevertToTurnCountRef = useRef(onRevertToTurnCount);
@@ -9478,6 +9525,9 @@ export default function ChatView(props: ChatViewProps) {
                 }
                 onRevertToTurnCount={
                   paintOnlyDisplayedTimeline ? noopHeldRevert : onRevertTimelineTurn
+                }
+                onForkFromTurnCount={
+                  paintOnlyDisplayedTimeline ? noopHeldRevert : onForkTimelineTurn
                 }
                 isRevertingCheckpoint={!paintOnlyDisplayedTimeline && isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
