@@ -19,7 +19,12 @@ export function settledThreadTitle(
   hostname: string,
   aliases: Readonly<Record<string, string>>,
 ): string {
-  const projectDir = NodePath.win32.basename(workspaceRoot).toLowerCase();
+  // A drive root (C:\) has no basename; name it by its drive instead ("c:").
+  const projectDir = (
+    NodePath.win32.basename(workspaceRoot) ||
+    workspaceRoot.replace(/[\\/]+$/, "") ||
+    workspaceRoot
+  ).toLowerCase();
   const existingPrefix = new RegExp(
     `^\\([^)]+\\) ${projectDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} - `,
     "i",
