@@ -1772,6 +1772,70 @@ describe("CheckpointReactor", () => {
     );
   });
 
+  it("thread.fork gives each fork its own message ids and leaves it active", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: true });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const forkIds = [ThreadId.make("thread-1-fork-a"), ThreadId.make("thread-1-fork-b")];
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.history.import",
+        commandId: CommandId.make("cmd-history-import"),
+        threadId,
+        messages: [
+          { messageId: MessageId.make("message-1"), role: "user", text: "first", createdAt },
+          {
+            messageId: MessageId.make("message-2"),
+            role: "assistant",
+            text: "first answer",
+            createdAt,
+          },
+        ],
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-diff-1"),
+        threadId,
+        turnId: asTurnId("turn-1"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt,
+      }),
+    );
+    await waitForThread(harness.readModel, (thread) => thread.checkpoints.length === 1);
+
+    // Forking the same point twice is what a double click does.
+    for (const forkThreadId of forkIds) {
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make(`cmd-thread-fork-${forkThreadId}`),
+          threadId,
+          forkThreadId,
+          turnCount: 1,
+          createdAt,
+        }),
+      );
+      await harness.drain();
+    }
+
+    const snapshot = await harness.readModel();
+    const forks = forkIds.map((id) => snapshot.threads.find((entry) => entry.id === id));
+    const [idsA, idsB] = forks.map((fork) => fork?.messages.map((message) => message.id) ?? []);
+    expect(idsA).toHaveLength(2);
+    expect(idsB).toHaveLength(2);
+    expect(idsA?.filter((id) => idsB?.includes(id))).toEqual([]);
+    for (const fork of forks) {
+      expect(fork?.settledAt).toBeNull();
+    }
+  });
+
   it("thread.fork reports a failure activity when the thread has no checkpointed turn", async () => {
     const harness = await createHarness({ initializeGit: false, seedFilesystemCheckpoints: false });
     const createdAt = "2026-01-01T00:00:00.000Z";

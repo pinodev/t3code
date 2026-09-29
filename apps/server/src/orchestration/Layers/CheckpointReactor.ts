@@ -925,13 +925,24 @@ const make = Effect.gen(function* () {
           commandId: yield* serverCommandId("thread-fork-history"),
           threadId: forkThreadId,
           messages: retained.map((message, index) => ({
-            messageId: MessageId.make(`import:fork:${threadId}:${String(index).padStart(6, "0")}`),
+            // Keyed by the fork, not the source: message ids are global, so a
+            // second fork of the same thread would otherwise take these rows over.
+            messageId: MessageId.make(
+              `import:fork:${forkThreadId}:${String(index).padStart(6, "0")}`,
+            ),
             role: message.role === "assistant" ? ("assistant" as const) : ("user" as const),
             text: message.text,
             createdAt: message.createdAt,
           })),
         });
       }
+      // History import settles the thread; a fork is live work, so bring it back.
+      yield* orchestrationEngine.dispatch({
+        type: "thread.unsettle",
+        commandId: yield* serverCommandId("thread-fork-unsettle"),
+        threadId: forkThreadId,
+        reason: "user",
+      });
     }).pipe(Effect.result);
 
     if (outcome._tag === "Failure") {
