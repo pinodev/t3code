@@ -620,7 +620,7 @@ describe("CheckpointReactor", () => {
         createHarness({
           seedFilesystemCheckpoints: false,
           projectWorkspaceRoot: workspaceRoot,
-          threadWorktreePath: workspaceRoot,
+          threadWorktreePath: repositoryRoot,
           providerSessionCwd: workspaceRoot,
         }),
       );
