@@ -12,6 +12,8 @@
  * @module ProviderService
  */
 import type {
+  OrchestrationGetAgentHistoryInput,
+  OrchestrationGetAgentHistoryResult,
   ProviderInterruptTurnInput,
   ProviderInstanceId,
   ProviderRespondToRequestInput,
@@ -134,9 +136,12 @@ export interface ProviderServiceShape {
     readonly numTurns: number;
   }) => Effect.Effect<void, ProviderServiceError>;
 
-  /**
-   * Upload a thread and return the provider's shareable feedback identifier.
-   */
+  /** Read saved child history without recovering or resuming the parent session. */
+  readonly getAgentHistory: (
+    input: OrchestrationGetAgentHistoryInput,
+  ) => Effect.Effect<OrchestrationGetAgentHistoryResult, ProviderServiceError>;
+
+  /** Upload a thread and return the provider's shareable feedback identifier. */
   readonly uploadFeedback: (
     input: ProviderUploadFeedbackInput,
   ) => Effect.Effect<ProviderUploadFeedbackResult, ProviderServiceError>;

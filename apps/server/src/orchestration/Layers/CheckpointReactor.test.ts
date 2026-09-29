@@ -145,6 +145,7 @@ function createProviderServiceHarness(
       }),
     rollbackConversation,
     forkConversation,
+    getAgentHistory: () => unsupported(),
     uploadFeedback: () => unsupported(),
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
