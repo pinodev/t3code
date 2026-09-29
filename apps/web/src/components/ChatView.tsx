@@ -1015,7 +1015,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         ? projectScriptCwd({
             project: {
               cwd: project.workspaceRoot,
-              repositoryRoot: project.repositoryIdentity?.rootPath,
+              repositoryRoot: project.gitRootPath ?? project.repositoryIdentity?.rootPath,
             },
             worktreePath: effectiveWorktreePath,
           })
@@ -1298,7 +1298,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
         ? projectScriptCwd({
             project: {
               cwd: project.workspaceRoot,
-              repositoryRoot: project.repositoryIdentity?.rootPath,
+              repositoryRoot: project.gitRootPath ?? project.repositoryIdentity?.rootPath,
             },
             worktreePath,
           })
@@ -1347,7 +1347,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
           ? projectScriptCwd({
               project: {
                 cwd: project.workspaceRoot,
-                repositoryRoot: project.repositoryIdentity?.rootPath,
+                repositoryRoot: project.gitRootPath ?? project.repositoryIdentity?.rootPath,
               },
               worktreePath: terminalWorktreePath,
             })
@@ -3563,7 +3563,7 @@ export default function ChatView(props: ChatViewProps) {
     ? projectScriptCwd({
         project: {
           cwd: activeProject.workspaceRoot,
-          repositoryRoot: activeProject.repositoryIdentity?.rootPath,
+          repositoryRoot: activeProject.gitRootPath ?? activeProject.repositoryIdentity?.rootPath,
         },
         worktreePath: activeThread?.worktreePath ?? null,
       })
@@ -3647,7 +3647,7 @@ export default function ChatView(props: ChatViewProps) {
     ? projectScriptCwd({
         project: {
           cwd: activeProjectCwd,
-          repositoryRoot: activeProject?.repositoryIdentity?.rootPath,
+          repositoryRoot: activeProject?.gitRootPath ?? activeProject?.repositoryIdentity?.rootPath,
         },
         worktreePath: activeThreadWorktreePath,
       })
@@ -6501,7 +6501,7 @@ export default function ChatView(props: ChatViewProps) {
       const settledCwd = projectScriptCwd({
         project: {
           cwd: activeProjectCwd,
-          repositoryRoot: activeProject?.repositoryIdentity?.rootPath,
+          repositoryRoot: activeProject?.gitRootPath ?? activeProject?.repositoryIdentity?.rootPath,
         },
         worktreePath: activeThreadWorktreePath,
       });
@@ -6514,7 +6514,7 @@ export default function ChatView(props: ChatViewProps) {
       return current;
     });
   }, [
-    activeProject?.repositoryIdentity?.rootPath,
+    activeProject?.gitRootPath ?? activeProject?.repositoryIdentity?.rootPath,
     activeProjectCwd,
     activeThreadId,
     activeThreadWorktreePath,

@@ -3152,7 +3152,8 @@ const makeWsRpcLayer = (
                 resource: input.resource,
                 workspaceRoot: resolveProjectCwdInWorktree({
                   workspaceRoot: project.value.workspaceRoot,
-                  repositoryRoot: project.value.repositoryIdentity?.rootPath,
+                  repositoryRoot:
+                    project.value.gitRootPath ?? project.value.repositoryIdentity?.rootPath,
                   worktreePath: thread.value.worktreePath,
                 }),
               });

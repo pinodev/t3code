@@ -32,7 +32,7 @@ export function useActiveProjectTarget(): ActiveProjectTarget | null {
   const cwd = project
     ? resolveProjectCwdInWorktree({
         workspaceRoot: project.workspaceRoot,
-        repositoryRoot: project.repositoryIdentity?.rootPath,
+        repositoryRoot: project.gitRootPath ?? project.repositoryIdentity?.rootPath,
         worktreePath: thread?.worktreePath,
       })
     : null;

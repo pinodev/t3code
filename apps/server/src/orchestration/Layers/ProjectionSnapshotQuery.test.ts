@@ -54,6 +54,7 @@ it.effect("reads project shells without loading threads or resolving excluded pr
     Layer.provide(ThreadPlanProgress.layer),
     Layer.provide(
       Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolveRoot: () => Effect.succeed(null),
         resolve: (root) =>
           Effect.sync(() => {
             resolved.push(root);
@@ -552,6 +553,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
           repositoryIdentity: null,
+          gitRootPath: null,
           defaultModelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
@@ -2372,6 +2374,7 @@ it.effect(
       Layer.provide(ThreadPlanProgress.layer),
       Layer.provideMerge(
         Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+          resolveRoot: (cwd) => Effect.succeed(cwd),
           resolve: (cwd: string) =>
             Effect.sync(() => {
               resolveCalls.push(cwd);
@@ -2448,6 +2451,7 @@ it.effect(
       assert.equal(shellSnapshot.projects.length, 2);
       assert.equal(shellSnapshot.projects[0]?.repositoryIdentity?.rootPath, "/tmp/shared-root");
       assert.equal(shellSnapshot.projects[1]?.repositoryIdentity?.rootPath, "/tmp/shared-root");
+      assert.equal(shellSnapshot.projects[0]?.gitRootPath, "/tmp/shared-root");
 
       resolveCalls.length = 0;
 
@@ -3420,6 +3424,7 @@ it.effect("omits foreign-host PRs from legacy snapshots while preserving native 
     Layer.provide(ThreadPlanProgress.layer),
     Layer.provide(
       Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolveRoot: () => Effect.succeed(null),
         resolve: () =>
           Effect.succeed({
             canonicalKey: "github.com/acme/web",

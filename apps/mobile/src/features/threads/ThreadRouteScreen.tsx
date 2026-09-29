@@ -620,7 +620,8 @@ function ThreadRouteContent(
       const cwd = projectScriptCwd({
         project: {
           cwd: selectedThreadProject.workspaceRoot,
-          repositoryRoot: selectedThreadProject.repositoryIdentity?.rootPath,
+          repositoryRoot:
+            selectedThreadProject.gitRootPath ?? selectedThreadProject.repositoryIdentity?.rootPath,
         },
         worktreePath: preferredWorktreePath,
       });

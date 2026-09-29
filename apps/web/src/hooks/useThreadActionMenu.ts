@@ -247,7 +247,8 @@ export function useThreadActionMenu(input: {
             const workspacePath = threadProject
               ? resolveProjectCwdInWorktree({
                   workspaceRoot: threadProject.workspaceRoot,
-                  repositoryRoot: threadProject.repositoryIdentity?.rootPath,
+                  repositoryRoot:
+                    threadProject.gitRootPath ?? threadProject.repositoryIdentity?.rootPath,
                   worktreePath: thread.worktreePath,
                 })
               : projectCwd;

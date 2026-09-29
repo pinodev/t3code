@@ -29,4 +29,20 @@ describe("resolveThreadWorkspaceCwd", () => {
       }),
     ).toBe("C:\\notes");
   });
+
+  it("keeps a nested project cwd in a repository without a remote", () => {
+    expect(
+      resolveThreadWorkspaceCwd({
+        thread: { projectId, worktreePath: "D:\\worktrees\\feature" },
+        projects: [
+          {
+            id: projectId,
+            workspaceRoot: "C:\\kdb\\agi",
+            gitRootPath: "C:\\kdb",
+            repositoryIdentity: null,
+          },
+        ],
+      }),
+    ).toBe("D:\\worktrees\\feature\\agi");
+  });
 });

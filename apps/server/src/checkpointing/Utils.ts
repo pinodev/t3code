@@ -18,6 +18,7 @@ export function resolveThreadWorkspaceCwd(input: {
   readonly projects: ReadonlyArray<{
     readonly id: ProjectId;
     readonly workspaceRoot: string;
+    readonly gitRootPath?: string | null | undefined;
     readonly repositoryIdentity?: { readonly rootPath?: string | undefined } | null | undefined;
   }>;
 }): string | undefined {
@@ -25,7 +26,7 @@ export function resolveThreadWorkspaceCwd(input: {
   if (!project) return input.thread.worktreePath ?? undefined;
   return resolveProjectCwdInWorktree({
     workspaceRoot: project.workspaceRoot,
-    repositoryRoot: project.repositoryIdentity?.rootPath,
+    repositoryRoot: project.gitRootPath ?? project.repositoryIdentity?.rootPath,
     worktreePath: input.thread.worktreePath,
   });
 }
