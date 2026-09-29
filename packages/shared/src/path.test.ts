@@ -6,9 +6,37 @@ import {
   isWindowsDrivePath,
   normalizeProjectPathForComparison,
   normalizeProjectPathForDispatch,
+  resolveProjectCwdInWorktree,
 } from "./path.ts";
 
 describe("path helpers", () => {
+  it("keeps a nested project's cwd inside a worktree", () => {
+    expect(
+      resolveProjectCwdInWorktree({
+        workspaceRoot: "C:\\kdb\\agi",
+        repositoryRoot: "C:\\kdb",
+        worktreePath: "D:\\worktrees\\feature",
+      }),
+    ).toBe("D:\\worktrees\\feature\\agi");
+    expect(
+      resolveProjectCwdInWorktree({
+        workspaceRoot: "/repo/packages/web",
+        repositoryRoot: "/repo",
+        worktreePath: "/worktree",
+      }),
+    ).toBe("/worktree/packages/web");
+  });
+
+  it("uses the exact project directory without a worktree or Git repository", () => {
+    expect(resolveProjectCwdInWorktree({ workspaceRoot: "C:\\notes" })).toBe("C:\\notes");
+    expect(
+      resolveProjectCwdInWorktree({
+        workspaceRoot: "C:\\notes",
+        worktreePath: "D:\\worktree",
+      }),
+    ).toBe("D:\\worktree");
+  });
+
   it("detects windows drive paths", () => {
     expect(isWindowsDrivePath("C:\\repo")).toBe(true);
     expect(isWindowsDrivePath("D:/repo")).toBe(true);

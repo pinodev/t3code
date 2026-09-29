@@ -3,7 +3,7 @@ import { LayersIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
-import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
+import type { SidebarProjectSnapshot } from "../../sidebarProjectCatalog";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";

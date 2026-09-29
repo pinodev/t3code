@@ -41,6 +41,7 @@ import {
   sidebarListItemId,
   sortPinnedThreadsForSidebar,
   sortThreadsForSidebar,
+  sortThreadsByRecentActivity,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   shouldCreateNewThreadInCurrentProject,
@@ -947,6 +948,36 @@ describe("sortThreadsForSidebar", () => {
   });
 });
 
+describe("sortThreadsByRecentActivity", () => {
+  it("places recently active threads from different environments in one list", () => {
+    const rows = [
+      {
+        id: "old",
+        environmentId: "local",
+        createdAt: "2026-09-01T00:00:00Z",
+        updatedAt: "2026-09-01T00:00:00Z",
+      },
+      {
+        id: "new",
+        environmentId: "PS252",
+        createdAt: "2026-09-02T00:00:00Z",
+        updatedAt: "2026-09-02T00:00:00Z",
+      },
+      {
+        id: "active",
+        environmentId: "local",
+        createdAt: "2026-08-01T00:00:00Z",
+        updatedAt: "2026-09-03T00:00:00Z",
+      },
+    ];
+    expect(sortThreadsByRecentActivity(rows).map((row) => row.id)).toEqual([
+      "active",
+      "new",
+      "old",
+    ]);
+  });
+});
+
 describe("pinOrderKeyBetween", () => {
   it("produces keys that sort between their bounds", () => {
     const middle = pinOrderKeyBetween(null, null)!;
@@ -1228,6 +1259,32 @@ describe("planSidebarThreadDrop", () => {
       ...overrides,
       target: { activeOrder: [], ...overrides.target },
     });
+
+  it("keeps Active ordered by activity when dropping threads", () => {
+    expect(
+      plan({
+        activeKey: "a1",
+        activeSection: "active",
+        recentActivityOrder: true,
+        target: { section: "active", pinnedOrder: [], activeOrder: ["a2", "a1", "a3"] },
+      }),
+    ).toEqual({ kind: "none" });
+    expect(
+      plan({
+        activeKey: "p1",
+        activeSection: "pinned",
+        recentActivityOrder: true,
+        target: { section: "active", pinnedOrder: ["p2", "p3"], activeOrder: ["p1", "a1"] },
+      }),
+    ).toEqual({
+      kind: "move-active",
+      order: ["a1", "a2", "a3"],
+      assignments: [],
+      unpin: true,
+      unsettle: false,
+      unsnooze: false,
+    });
+  });
 
   it("allows old-server pinned reordering while rejecting settlement", () => {
     expect(

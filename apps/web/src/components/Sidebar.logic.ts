@@ -250,6 +250,7 @@ export function planSidebarThreadDrop(input: {
   readonly activeOrder: readonly string[];
   readonly activeKeysById: ReadonlyMap<string, string | null | undefined>;
   readonly activeReorderableKeys?: ReadonlySet<string>;
+  readonly recentActivityOrder?: boolean;
 }): SidebarThreadDropPlan {
   const {
     activeKey,
@@ -269,6 +270,18 @@ export function planSidebarThreadDrop(input: {
   }
   switch (target.section) {
     case "active": {
+      if (input.recentActivityOrder) {
+        return activeSection === "active"
+          ? { kind: "none" }
+          : {
+              kind: "move-active",
+              order: activeOrder,
+              assignments: [],
+              unpin: activePinned,
+              unsettle: activeSettled,
+              unsnooze: activeSection === "snoozed",
+            };
+      }
       const order = target.activeOrder;
       if (
         activeSection === "active" &&
@@ -889,6 +902,28 @@ function firstValidTimestamp(
 }
 
 export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
+
+export function sortThreadsByRecentActivity<
+  T extends {
+    readonly id: string;
+    readonly environmentId: string;
+    readonly updatedAt: string;
+    readonly createdAt: string;
+  },
+>(threads: readonly T[]): T[] {
+  return [...threads].sort((left, right) => {
+    const leftTime =
+      toSortableTimestamp(left.updatedAt) ?? toSortableTimestamp(left.createdAt) ?? 0;
+    const rightTime =
+      toSortableTimestamp(right.updatedAt) ?? toSortableTimestamp(right.createdAt) ?? 0;
+    return (
+      rightTime - leftTime ||
+      right.createdAt.localeCompare(left.createdAt) ||
+      right.id.localeCompare(left.id) ||
+      right.environmentId.localeCompare(left.environmentId)
+    );
+  });
+}
 
 // Pinned-reorder key math and the keyed sort live in client-runtime
 // (state/thread-sort) so web and mobile compute identical pinned orders.

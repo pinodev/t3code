@@ -89,7 +89,6 @@ import {
   sortHomeProjectScopes,
   type HomeProjectScope,
 } from "../home/homeThreadList";
-import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import {
   resolvePendingTaskInteractionMode,
   resolveProviderInteractionMode,
@@ -228,7 +227,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const projects = useProjects();
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
-  const groupingSettings = useMobileProjectGroupingSettings();
   const { enabled: legacyPlanModeEnabled, loaded: planModePreferenceLoaded } =
     useLegacyPlanModeState();
   const projectScopes = useMemo(
@@ -237,13 +235,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         scopes: buildHomeProjectScopes({
           projects,
           environmentId: null,
-          projectGroupingMode: groupingSettings.sidebarProjectGroupingMode,
         }),
         threads,
         pendingTasks: [],
         projectSortOrder: "updated_at",
       }),
-    [groupingSettings.sidebarProjectGroupingMode, projects, threads],
+    [projects, threads],
   );
 
   const [selectedEnvironmentIdOverride, setSelectedEnvironmentId] = useState<EnvironmentId | null>(

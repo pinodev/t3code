@@ -1,5 +1,5 @@
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
-import { buildProjectGroups, type ProjectGroupingSettings } from "./logicalProject";
+import { buildProjectGroups } from "./logicalProject";
 import type { Project } from "./types";
 
 export type EnvironmentPresence = "local-only" | "remote-only" | "mixed";
@@ -45,28 +45,8 @@ export interface SidebarProjectPickerEntry {
   isPreferred: boolean;
 }
 
-export function buildPhysicalToLogicalProjectKeyMap(input: {
-  projects: ReadonlyArray<Project>;
-  settings: ProjectGroupingSettings;
-  primaryEnvironmentId: EnvironmentId | null;
-}): Map<string, string> {
-  const mapping = new Map<string, string>();
-  const groups = buildProjectGroups({
-    projects: input.projects,
-    settings: input.settings,
-    preferredEnvironmentId: input.primaryEnvironmentId,
-  });
-  for (const group of groups) {
-    for (const member of group.members) {
-      mapping.set(member.physicalProjectKey, group.key);
-    }
-  }
-  return mapping;
-}
-
 export function buildSidebarProjectSnapshots(input: {
   projects: ReadonlyArray<Project>;
-  settings: ProjectGroupingSettings;
   primaryEnvironmentId: EnvironmentId | null;
   resolveEnvironmentLabel: (environmentId: EnvironmentId) => string | null;
   // Returns true when an env id maps to a desktop-local saved-env
@@ -78,8 +58,6 @@ export function buildSidebarProjectSnapshots(input: {
 }): SidebarProjectSnapshot[] {
   return buildProjectGroups({
     projects: input.projects,
-    settings: input.settings,
-    preferredEnvironmentId: input.primaryEnvironmentId,
   }).map((group): SidebarProjectSnapshot => {
     const members = group.members.map(
       ({ physicalProjectKey, project }): SidebarProjectGroupMember => ({

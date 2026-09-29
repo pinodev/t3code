@@ -69,19 +69,14 @@ import {
 } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useClientSettings } from "~/hooks/useSettings";
-import {
-  deriveLogicalProjectKeyFromSettings,
-  derivePhysicalProjectKey,
-  selectProjectGroupingSettings,
-} from "~/logicalProject";
+import { deriveLogicalProjectKey } from "~/logicalProject";
 import { changeRequestRepositoryUrl, gitHubPullRequestBrowserUrl } from "~/lib/openPullRequestLink";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
-import { buildPhysicalToLogicalProjectKeyMap } from "~/sidebarProjectGrouping";
 import { useProjects, useServerConfigs } from "~/state/entities";
-import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -611,7 +606,6 @@ export function PullRequestDetailPanel({
   const legacyMergeMethodOverrides = useClientSettings(
     (settings) => settings.pullRequestMergeMethodOverrides,
   );
-  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projectDefaultMergeMethod =
     resolveProjectSettings(
       environmentConfigs.get(environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS,
@@ -884,7 +878,6 @@ export function PullRequestDetailPanel({
   const [titleSaving, setTitleSaving] = useState(false);
   const newThread = useNewThreadHandler();
   const { environments } = useEnvironments();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projects = useProjects();
   const unavailableGitHubUrl = useMemo(() => {
     const identity = projects.find(
@@ -901,20 +894,12 @@ export function PullRequestDetailPanel({
         candidate.environmentId === environmentId && candidate.id === reference.projectId,
     );
     if (!project) return undefined;
-    const projectKey =
-      buildPhysicalToLogicalProjectKeyMap({
-        projects,
-        settings: projectGroupingSettings,
-        primaryEnvironmentId,
-      }).get(derivePhysicalProjectKey(project)) ??
-      deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings);
+    const projectKey = deriveLogicalProjectKey(project);
     return legacyMergeMethodOverrides[projectKey];
   }, [
     environmentId,
     legacyMergeMethodOverrides,
-    primaryEnvironmentId,
     projectDefaultMergeMethod,
-    projectGroupingSettings,
     projects,
     reference.projectId,
   ]);

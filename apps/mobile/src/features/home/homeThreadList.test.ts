@@ -66,14 +66,13 @@ function buildGroups(
     searchQuery: "",
     projectSortOrder: "updated_at",
     threadSortOrder: "updated_at",
-    projectGroupingMode: "repository",
     now: NOW,
     ...overrides,
   });
 }
 
 describe("buildHomeThreadGroups", () => {
-  it("builds one v2 scope for the same repository across environments", () => {
+  it("keeps the same repository separate across environments", () => {
     const localEnvironmentId = EnvironmentId.make("environment-local");
     const remoteEnvironmentId = EnvironmentId.make("environment-remote");
     const repositoryIdentity = {
@@ -102,21 +101,17 @@ describe("buildHomeThreadGroups", () => {
     const scopes = buildHomeProjectScopes({
       projects,
       environmentId: null,
-      projectGroupingMode: "repository",
     });
 
-    expect(scopes).toHaveLength(1);
-    expect(scopes[0]?.title).toBe("t3code");
-    expect(scopes[0]?.projects).toEqual(projects);
-    expect(scopes[0]?.projectRefs).toEqual(
-      projects.map((project) => ({
-        environmentId: project.environmentId,
-        projectId: project.id,
-      })),
+    expect(scopes).toHaveLength(2);
+    expect(scopes.map((scope) => scope.title)).toEqual(["t3code", "t3code"]);
+    expect(scopes.map((scope) => scope.projects)).toEqual([[projects[0]], [projects[1]]]);
+    expect(scopes.map((scope) => scope.projectRefs)).toEqual(
+      projects.map((project) => [{ environmentId: project.environmentId, projectId: project.id }]),
     );
   });
 
-  it("routes stale duplicate project refs through the canonical repository group", () => {
+  it("routes stale duplicate project refs through their workspace group", () => {
     const localEnvironmentId = EnvironmentId.make("environment-local");
     const remoteEnvironmentId = EnvironmentId.make("environment-remote");
     const repositoryIdentity = {
@@ -161,17 +156,13 @@ describe("buildHomeThreadGroups", () => {
     const scopes = buildHomeProjectScopes({
       projects,
       environmentId: null,
-      projectGroupingMode: "repository",
     });
     const groups = buildGroups(projects, [staleThread]);
 
-    expect(scopes).toHaveLength(1);
-    expect(scopes[0]?.projects.map((project) => project.id)).toEqual([
-      local.id,
-      canonicalRemote.id,
-    ]);
-    expect(scopes[0]?.projectRefs.map((projectRef) => projectRef.projectId)).toEqual([
-      local.id,
+    expect(scopes).toHaveLength(2);
+    expect(scopes[0]?.projects.map((project) => project.id)).toEqual([local.id]);
+    expect(scopes[1]?.projects.map((project) => project.id)).toEqual([canonicalRemote.id]);
+    expect(scopes[1]?.projectRefs.map((projectRef) => projectRef.projectId)).toEqual([
       stale.id,
       canonicalRemote.id,
     ]);
@@ -180,7 +171,7 @@ describe("buildHomeThreadGroups", () => {
     expect(groups[0]?.newThreadTarget?.id).toBe(canonicalRemote.id);
   });
 
-  it("keeps repository identity from an older duplicate when the freshness winner lacks it", () => {
+  it("keeps workspace identity when the freshest duplicate lacks repository identity", () => {
     const localEnvironmentId = EnvironmentId.make("environment-local");
     const remoteEnvironmentId = EnvironmentId.make("environment-remote");
     const repositoryIdentity = {
@@ -218,15 +209,12 @@ describe("buildHomeThreadGroups", () => {
     const scopes = buildHomeProjectScopes({
       projects,
       environmentId: null,
-      projectGroupingMode: "repository",
     });
 
-    expect(scopes).toHaveLength(1);
+    expect(scopes).toHaveLength(2);
     expect(scopes[0]?.representative.id).toBe(ProjectId.make("project-local"));
-    expect(scopes[0]?.projects.map((project) => project.id)).toContain(
-      ProjectId.make("project-remote-fresh"),
-    );
-    expect(scopes[0]?.projectRefs).toHaveLength(3);
+    expect(scopes[1]?.representative.id).toBe(ProjectId.make("project-remote-fresh"));
+    expect(scopes[1]?.projectRefs).toHaveLength(2);
   });
 
   it("sorts v2 project scopes by their grouped thread activity", () => {
@@ -244,7 +232,6 @@ describe("buildHomeThreadGroups", () => {
     const scopes = buildHomeProjectScopes({
       projects: [newerProject, olderProject],
       environmentId: null,
-      projectGroupingMode: "separate",
     });
 
     expect(
@@ -289,7 +276,6 @@ describe("buildHomeThreadGroups", () => {
     const scopes = buildHomeProjectScopes({
       projects: [invalidProject, validProject],
       environmentId: null,
-      projectGroupingMode: "separate",
     });
 
     expect(
@@ -302,7 +288,7 @@ describe("buildHomeThreadGroups", () => {
     ).toEqual([validProject.id, invalidProject.id]);
   });
 
-  it("uses the freshest member when a grouped scope has no activity", () => {
+  it("uses the freshest workspace when scopes have no activity", () => {
     const localEnvironmentId = EnvironmentId.make("environment-local");
     const remoteEnvironmentId = EnvironmentId.make("environment-remote");
     const repositoryIdentity = {
@@ -336,7 +322,6 @@ describe("buildHomeThreadGroups", () => {
     const scopes = buildHomeProjectScopes({
       projects: [olderMember, newerMember, otherProject],
       environmentId: null,
-      projectGroupingMode: "repository",
     });
 
     expect(
@@ -346,7 +331,7 @@ describe("buildHomeThreadGroups", () => {
         pendingTasks: [],
         projectSortOrder: "updated_at",
       })[0]?.key,
-    ).toBe(scopes.find((scope) => scope.projects.length === 2)?.key);
+    ).toBe(scopes.find((scope) => scope.representative.id === newerMember.id)?.key);
   });
 
   it("does not merge unrelated repositories that share a title", () => {
@@ -371,7 +356,6 @@ describe("buildHomeThreadGroups", () => {
       buildHomeProjectScopes({
         projects,
         environmentId: null,
-        projectGroupingMode: "repository",
       }),
     ).toHaveLength(2);
   });
@@ -395,7 +379,6 @@ describe("buildHomeThreadGroups", () => {
     const scopes = buildHomeProjectScopes({
       projects: [project],
       environmentId: null,
-      projectGroupingMode: "repository",
     });
     const groups = buildGroups(
       [project],
@@ -484,7 +467,6 @@ describe("buildHomeThreadGroups", () => {
     const groups = buildGroups([olderProject, newerProject], threads, {
       projectSortOrder: "created_at",
       threadSortOrder: "created_at",
-      projectGroupingMode: "separate",
     });
 
     expect(groups.map((group) => group.representative.id)).toEqual([
@@ -525,7 +507,7 @@ describe("buildHomeThreadGroups", () => {
     expect(groups[0]?.threads.map((thread) => thread.environmentId)).toEqual([remoteEnvironmentId]);
   });
 
-  it("matches web repository, repository-path, and separate grouping modes", () => {
+  it("keeps nested workspaces separate even when they share a repository", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const repositoryIdentity = {
       canonicalKey: "github.com/t3tools/t3code",
@@ -565,17 +547,7 @@ describe("buildHomeThreadGroups", () => {
       }),
     );
 
-    expect(buildGroups(projects, threads, { projectGroupingMode: "repository" })).toHaveLength(1);
-    expect(
-      buildGroups(projects, threads, { projectGroupingMode: "repository_path" }).map(
-        (group) => group.title,
-      ),
-    ).toEqual(["Mobile", "Web"]);
-    expect(
-      buildGroups(projects, threads, { projectGroupingMode: "separate" }).map(
-        (group) => group.title,
-      ),
-    ).toEqual(["Mobile", "Web"]);
+    expect(buildGroups(projects, threads).map((group) => group.title)).toEqual(["Mobile", "Web"]);
   });
 
   it("default view shows only threads from the last 5 days", () => {
@@ -733,7 +705,7 @@ describe("buildHomeThreadGroups", () => {
     expect(groups[0]?.threads.map((candidate) => candidate.id)).toEqual(["thread-content"]);
   });
 
-  it("targets quick new threads at the group member with the newest thread", () => {
+  it("targets quick new threads at each workspace independently", () => {
     const laptopEnv = EnvironmentId.make("environment-laptop");
     const desktopEnv = EnvironmentId.make("environment-desktop");
     const repositoryIdentity = {
@@ -773,12 +745,11 @@ describe("buildHomeThreadGroups", () => {
       }),
     ];
 
-    // Aggregated into one group by repository; the quick new-thread target
-    // must follow the newest thread (desktop), not the arbitrary first member.
     const groups = buildGroups([laptopProject, desktopProject], threads);
-    expect(groups).toHaveLength(1);
-    expect(groups[0]?.projects).toHaveLength(2);
+    expect(groups).toHaveLength(2);
+    expect(groups[0]?.projects).toEqual([desktopProject]);
     expect(groups[0]?.newThreadTarget?.environmentId).toBe(desktopEnv);
     expect(groups[0]?.newThreadTarget?.id).toBe(desktopProject.id);
+    expect(groups[1]?.newThreadTarget?.id).toBe(laptopProject.id);
   });
 });

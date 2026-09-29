@@ -4,7 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type {
   SidebarProjectGroupMember,
   SidebarProjectSnapshot,
-} from "../../sidebarProjectGrouping";
+} from "../../sidebarProjectCatalog";
 import { resolveSettingsScope, validateSettingsScopeSearch } from "./settingsScope";
 
 const laptopId = EnvironmentId.make("laptop");

@@ -3,7 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type {
   SidebarProjectGroupMember,
   SidebarProjectSnapshot,
-} from "../../sidebarProjectGrouping";
+} from "../../sidebarProjectCatalog";
 import type { EnvironmentPresentation } from "../../state/environments";
 
 /**

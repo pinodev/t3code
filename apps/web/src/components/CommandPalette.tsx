@@ -174,12 +174,12 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
-import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
+import { getProjectOrderKey } from "../logicalProject";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
-} from "../sidebarProjectGrouping";
+} from "../sidebarProjectCatalog";
 import type { Project } from "../types";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
@@ -754,10 +754,6 @@ function OpenCommandPaletteDialog(props: {
   const cloneLookupGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
-  const projectGroupingSettings = useMemo(
-    () => selectProjectGroupingSettings(clientSettings),
-    [clientSettings],
-  );
 
   const environmentLabelById = useMemo(
     () =>
@@ -805,7 +801,6 @@ function OpenCommandPaletteDialog(props: {
     () =>
       buildSidebarProjectSnapshots({
         projects: clientSettings.sidebarProjectSortOrder === "manual" ? orderedProjects : projects,
-        settings: projectGroupingSettings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
       }),
@@ -814,7 +809,6 @@ function OpenCommandPaletteDialog(props: {
       environmentLabelById,
       orderedProjects,
       primaryEnvironmentId,
-      projectGroupingSettings,
       projects,
     ],
   );

@@ -2,8 +2,7 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useFocusEffect } from "@react-navigation/native";
 import {
   CommonActions,
@@ -29,7 +28,6 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
-import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
   deriveFileInspectorPaneLayout,
@@ -45,11 +43,6 @@ import {
   resolveThreadSelectionOverlayState,
 } from "../../lib/adaptive-navigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { mobilePreferencesAtom } from "../../state/preferences";
-import {
-  DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS,
-  resolveMobileProjectGroupingSettings,
-} from "../../state/project-grouping";
 import {
   parseActiveThreadPath,
   useHardwareKeyboardCommand,
@@ -206,34 +199,6 @@ export function AdaptiveWorkspaceLayout(props: {
   readonly pathname: string;
   readonly workspaceRouteKey: string | undefined;
 }) {
-  const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  if (!AsyncResult.isSuccess(preferencesResult)) {
-    return AsyncResult.isFailure(preferencesResult) ? (
-      <AdaptiveWorkspaceLayoutContent
-        {...props}
-        projectGroupingMode={DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS.sidebarProjectGroupingMode}
-      />
-    ) : null;
-  }
-  const groupingSettings = resolveMobileProjectGroupingSettings(preferencesResult.value);
-  return (
-    <AdaptiveWorkspaceLayoutContent
-      {...props}
-      projectGroupingMode={groupingSettings.sidebarProjectGroupingMode}
-    />
-  );
-}
-
-function AdaptiveWorkspaceLayoutContent(
-  props: {
-    readonly children: ReactNode;
-    readonly pathname: string;
-    readonly workspaceRouteKey: string | undefined;
-  } & {
-    readonly projectGroupingMode: SidebarProjectGroupingMode;
-  },
-) {
-  const projectGroupingMode = props.projectGroupingMode;
   const { materialYouStyleLayoutActive } = useAppearancePreferences();
   const { width, height } = useWindowDimensions();
   const pathname = props.pathname;
@@ -567,7 +532,7 @@ function AdaptiveWorkspaceLayoutContent(
   );
 
   return (
-    <HomeListOptionsProvider projectGroupingMode={projectGroupingMode}>
+    <HomeListOptionsProvider>
       <AdaptiveWorkspaceContext.Provider value={contextValue}>
         <View testID="adaptive-workspace-layout" className="flex-1 flex-row">
           {shouldRenderPrimarySidebar && layout.listPaneWidth !== null ? (

@@ -229,9 +229,8 @@ function ThreadNavigationSidebarPane(
       buildHomeProjectScopes({
         projects,
         environmentId: options.selectedEnvironmentId,
-        projectGroupingMode: options.projectGroupingMode,
       }),
-    [options.projectGroupingMode, options.selectedEnvironmentId, projects],
+    [options.selectedEnvironmentId, projects],
   );
   const projectFilterOptions = useMemo(
     () =>
@@ -331,7 +330,6 @@ function ThreadNavigationSidebarPane(
             matchedThreadKeys,
             projectSortOrder: options.projectSortOrder,
             threadSortOrder: options.threadSortOrder,
-            projectGroupingMode: options.projectGroupingMode,
           }),
     [
       threadListV2Enabled,

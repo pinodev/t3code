@@ -58,9 +58,9 @@ edge to pin a thread. Section labels stay readable for the whole drag, and the s
 thread is over takes the accent color. Section labels also
 identify empty sections and a collapsed settled shelf.
 
-Drag within the pinned or active section to change its order. Other rows slide aside to show the
-spot where the thread will land. Drops into either section keep the position you choose. On
-mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
+On web and desktop, drag within the pinned section to change its order. Active threads stay in
+recent activity order across projects and environments. Each row shows its project and environment.
+On mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
 **Pinned** and **Active** to reorder, pin, or unpin. Drop onto the **Settled** divider to
 settle a thread. The dragged card shows the action before you release it. Expand **Snoozed**
 or **Settled** to drag a parked thread back into either live section. Each drop saves; **Done** returns to the thread list.
@@ -72,14 +72,11 @@ On web and desktop, the list also animates section changes made with thread acti
 preference. While dragging, rows follow the insertion gap without replaying a second transition
 after the drop.
 
-New threads appear above the active threads you have arranged. Settling clears a thread's active
-position, so using **Un-settle** returns it to the top. Pinning and snoozing preserve its active
-position until you move it again. Thread activity does not change the order. The settled shelf
-continues to use settlement time.
+On web and desktop, the active list puts recently active threads first. Pins remain above it.
+The settled shelf continues to use settlement time.
 
 If dragging is unavailable for one environment, update the T3 Code server running in that
-environment. Pinned and active reordering require server support. Threads from older servers keep
-their default order until the server is updated.
+environment. Pinned reordering requires server support.
 
 ## Settle finished work
 

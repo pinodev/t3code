@@ -272,12 +272,7 @@ import {
   preventTerminalCloseShortcut,
 } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
-import {
-  derivePhysicalProjectKey,
-  deriveLogicalProjectKeyFromSettings,
-  selectProjectGroupingSettings,
-} from "../logicalProject";
-import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
+import { deriveLogicalProjectKey } from "../logicalProject";
 import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import {
   beginBackgroundDraftSubmissionByRef,
@@ -1018,7 +1013,10 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       launchContext?.cwd ??
       (project
         ? projectScriptCwd({
-            project: { cwd: project.workspaceRoot },
+            project: {
+              cwd: project.workspaceRoot,
+              repositoryRoot: project.repositoryIdentity?.rootPath,
+            },
             worktreePath: effectiveWorktreePath,
           })
         : null),
@@ -1298,7 +1296,10 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       activeSummary?.cwd ??
       (project
         ? projectScriptCwd({
-            project: { cwd: project.workspaceRoot },
+            project: {
+              cwd: project.workspaceRoot,
+              repositoryRoot: project.repositoryIdentity?.rootPath,
+            },
             worktreePath,
           })
         : null),
@@ -1344,7 +1345,10 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
         summary?.cwd ??
         (project
           ? projectScriptCwd({
-              project: { cwd: project.workspaceRoot },
+              project: {
+                cwd: project.workspaceRoot,
+                repositoryRoot: project.repositoryIdentity?.rootPath,
+              },
               worktreePath: terminalWorktreePath,
             })
           : null);
@@ -2217,11 +2221,8 @@ export default function ChatView(props: ChatViewProps) {
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
-  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const activeDraftLogicalProjectKey =
-    !isServerThread && activeProject
-      ? deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings)
-      : undefined;
+    !isServerThread && activeProject ? deriveLogicalProjectKey(activeProject) : undefined;
   const handleOpenDraftProjectSettings = useCallback(() => {
     if (!activeDraftLogicalProjectKey) return;
     void navigate({
@@ -2281,29 +2282,10 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeProjectRef, activeThreadRef]);
   useEffect(() => {
     if (!clientSettingsHydrated || !activeThreadRef || !activeProject) return;
-    // Reuse the sidebar's grouping so history follows the project rows the user
-    // sees. Deriving the key from the active project alone would miss the
-    // identity a duplicate row borrows from its siblings.
-    const logicalKeyByPhysicalKey = buildPhysicalToLogicalProjectKeyMap({
-      projects: allProjects,
-      settings: projectGroupingSettings,
-      primaryEnvironmentId,
-    });
     useBrowserHistoryStore
       .getState()
-      .registerThreadProject(
-        activeThreadRef,
-        logicalKeyByPhysicalKey.get(derivePhysicalProjectKey(activeProject)) ??
-          deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings),
-      );
-  }, [
-    activeProject,
-    activeThreadRef,
-    allProjects,
-    clientSettingsHydrated,
-    primaryEnvironmentId,
-    projectGroupingSettings,
-  ]);
+      .registerThreadProject(activeThreadRef, deriveLogicalProjectKey(activeProject));
+  }, [activeProject, activeThreadRef, clientSettingsHydrated]);
   const activeEnvironment =
     activeThread == null ? null : (environmentById.get(activeThread.environmentId) ?? null);
   const activeEnvironmentConnectionPhase = activeEnvironment?.connection.phase ?? "available";
@@ -2388,10 +2370,8 @@ export default function ChatView(props: ChatViewProps) {
   );
   const logicalProjectEnvironments = useMemo(() => {
     if (!activeProject) return [];
-    const logicalKey = deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings);
-    const memberProjects = allProjects.filter(
-      (p) => deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) === logicalKey,
-    );
+    const logicalKey = deriveLogicalProjectKey(activeProject);
+    const memberProjects = allProjects.filter((p) => deriveLogicalProjectKey(p) === logicalKey);
     const seen = new Set<string>();
     const envs: EnvironmentOption[] = [];
     for (const p of memberProjects) {
@@ -2413,7 +2393,7 @@ export default function ChatView(props: ChatViewProps) {
       return a.label.localeCompare(b.label);
     });
     return envs;
-  }, [activeProject, allProjects, projectGroupingSettings, primaryEnvironmentId, environmentById]);
+  }, [activeProject, allProjects, primaryEnvironmentId, environmentById]);
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
   const activeEnvironmentOption =
     logicalProjectEnvironments.find(
@@ -2447,10 +2427,7 @@ export default function ChatView(props: ChatViewProps) {
         throw new Error("No active project is available for this pull request.");
       }
       const activeProjectRef = scopeProjectRef(activeProject.environmentId, activeProject.id);
-      const logicalProjectKey = deriveLogicalProjectKeyFromSettings(
-        activeProject,
-        projectGroupingSettings,
-      );
+      const logicalProjectKey = deriveLogicalProjectKey(activeProject);
       const storedDraftSession = getDraftSessionByLogicalProjectKey(logicalProjectKey);
       if (storedDraftSession) {
         setDraftThreadContext(storedDraftSession.draftId, input);
@@ -2512,7 +2489,6 @@ export default function ChatView(props: ChatViewProps) {
       getDraftSessionByLogicalProjectKey,
       isServerThread,
       navigate,
-      projectGroupingSettings,
       routeKind,
       settings,
       setDraftThreadContext,
@@ -3585,7 +3561,10 @@ export default function ChatView(props: ChatViewProps) {
 
   const gitCwd = activeProject
     ? projectScriptCwd({
-        project: { cwd: activeProject.workspaceRoot },
+        project: {
+          cwd: activeProject.workspaceRoot,
+          repositoryRoot: activeProject.repositoryIdentity?.rootPath,
+        },
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
@@ -3664,7 +3643,15 @@ export default function ChatView(props: ChatViewProps) {
   const hasTimelineTopBanner = Boolean(visibleThreadError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
-  const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  const activeWorkspaceRoot = activeProjectCwd
+    ? projectScriptCwd({
+        project: {
+          cwd: activeProjectCwd,
+          repositoryRoot: activeProject?.repositoryIdentity?.rootPath,
+        },
+        worktreePath: activeThreadWorktreePath,
+      })
+    : (activeThreadWorktreePath ?? undefined);
   useLayoutEffect(() => {
     if (
       threadDetailLoading ||
@@ -6512,7 +6499,10 @@ export default function ChatView(props: ChatViewProps) {
         return current;
       }
       const settledCwd = projectScriptCwd({
-        project: { cwd: activeProjectCwd },
+        project: {
+          cwd: activeProjectCwd,
+          repositoryRoot: activeProject?.repositoryIdentity?.rootPath,
+        },
         worktreePath: activeThreadWorktreePath,
       });
       if (
@@ -6523,7 +6513,12 @@ export default function ChatView(props: ChatViewProps) {
       }
       return current;
     });
-  }, [activeProjectCwd, activeThreadId, activeThreadWorktreePath]);
+  }, [
+    activeProject?.repositoryIdentity?.rootPath,
+    activeProjectCwd,
+    activeThreadId,
+    activeThreadWorktreePath,
+  ]);
 
   useEffect(() => {
     if (terminalUiState.terminalOpen) {
