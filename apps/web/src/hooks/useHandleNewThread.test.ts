@@ -144,9 +144,8 @@ vi.mock("../lib/utils", () => ({
   newThreadId: () => "thread-delayed",
 }));
 vi.mock("../logicalProject", () => ({
-  deriveLogicalProjectKeyFromSettings: () => "remote-project",
+  deriveLogicalProjectKey: () => "remote-project",
   getProjectOrderKey: () => "remote-project",
-  selectProjectGroupingSettings: () => ({}),
 }));
 vi.mock("../state/entities", () => ({
   readProjects: () => [

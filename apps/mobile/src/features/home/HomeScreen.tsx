@@ -16,7 +16,6 @@ import {
 import {
   type EnvironmentId,
   resolveEnvironmentMachineKind,
-  type SidebarProjectGroupingMode,
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
@@ -100,7 +99,6 @@ interface HomeScreenProps {
   readonly selectedProjectKey: string | null;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
@@ -320,9 +318,8 @@ export function HomeScreen(props: HomeScreenProps) {
       buildHomeProjectScopes({
         projects: props.projects,
         environmentId: props.selectedEnvironmentId,
-        projectGroupingMode: props.projectGroupingMode,
       }),
-    [props.projectGroupingMode, props.projects, props.selectedEnvironmentId],
+    [props.projects, props.selectedEnvironmentId],
   );
   const selectedProjectScope = useMemo(
     () =>
@@ -400,12 +397,10 @@ export function HomeScreen(props: HomeScreenProps) {
             matchedThreadKeys,
             projectSortOrder: props.projectSortOrder,
             threadSortOrder: props.threadSortOrder,
-            projectGroupingMode: props.projectGroupingMode,
           }),
     [
       threadListV2Enabled,
       queuedThreadKeys,
-      props.projectGroupingMode,
       props.projectSortOrder,
       props.searchQuery,
       props.selectedEnvironmentId,

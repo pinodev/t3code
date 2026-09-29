@@ -1,4 +1,5 @@
 import type { ProjectId, ProjectScript, ServerSettings } from "@t3tools/contracts";
+import { resolveProjectCwdInWorktree } from "./path.ts";
 
 type ProjectScriptSettings = Pick<
   ServerSettings,
@@ -49,10 +50,15 @@ interface ProjectScriptRuntimeEnvInput {
 export function projectScriptCwd(input: {
   project: {
     cwd: string;
+    repositoryRoot?: string | null | undefined;
   };
   worktreePath?: string | null;
 }): string {
-  return input.worktreePath ?? input.project.cwd;
+  return resolveProjectCwdInWorktree({
+    workspaceRoot: input.project.cwd,
+    repositoryRoot: input.project.repositoryRoot,
+    worktreePath: input.worktreePath,
+  });
 }
 
 export function projectScriptRuntimeEnv(

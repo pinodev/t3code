@@ -389,12 +389,14 @@ function mapSessionRow(
 function mapProjectShellRow(
   row: Schema.Schema.Type<typeof ProjectionProjectDbRowSchema>,
   repositoryIdentity: OrchestrationProject["repositoryIdentity"],
+  gitRootPath: string | null,
 ): OrchestrationProjectShell {
   return {
     id: row.projectId,
     title: row.title,
     workspaceRoot: row.workspaceRoot,
     repositoryIdentity,
+    gitRootPath,
     defaultModelSelection: row.defaultModelSelection,
     defaultThreadEnvMode: row.defaultThreadEnvMode,
     autoPull: row.autoPull === 1,
@@ -520,6 +522,28 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         row.projectId,
         repositoryIdentityByWorkspaceRoot.get(row.workspaceRoot) ?? null,
       ]),
+    );
+  });
+
+  const resolveGitRootsForProjects = Effect.fn(
+    "ProjectionSnapshotQuery.resolveGitRootsForProjects",
+  )(function* (
+    projectRows: ReadonlyArray<Schema.Schema.Type<typeof ProjectionProjectDbRowSchema>>,
+  ) {
+    const activeRows = projectRows.filter((row) => row.deletedAt === null);
+    const uniqueWorkspaceRoots = [...new Set(activeRows.map((row) => row.workspaceRoot))];
+    const rootsByWorkspaceRoot = new Map(
+      yield* Effect.forEach(
+        uniqueWorkspaceRoots,
+        (workspaceRoot) =>
+          repositoryIdentityResolver
+            .resolveRoot(workspaceRoot)
+            .pipe(Effect.map((root) => [workspaceRoot, root] as const)),
+        { concurrency: repositoryIdentityResolutionConcurrency },
+      ),
+    );
+    return new Map(
+      activeRows.map((row) => [row.projectId, rootsByWorkspaceRoot.get(row.workspaceRoot) ?? null]),
     );
   });
 
@@ -2657,6 +2681,7 @@ pending_approval_requests AS (
 
               const repositoryIdentities =
                 yield* resolveRepositoryIdentitiesForProjects(projectRows);
+              const gitRoots = yield* resolveGitRootsForProjects(projectRows);
               const latestTurnByThread = new Map(
                 latestTurnRows.map((row) => [row.threadId, mapLatestTurn(row)] as const),
               );
@@ -2670,7 +2695,11 @@ pending_approval_requests AS (
                 projects: Arr.filterMap(projectRows, (row) =>
                   row.deletedAt === null
                     ? Result.succeed(
-                        mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
+                        mapProjectShellRow(
+                          row,
+                          repositoryIdentities.get(row.projectId) ?? null,
+                          gitRoots.get(row.projectId) ?? null,
+                        ),
                       )
                     : Result.failVoid,
                 ),
@@ -2823,6 +2852,9 @@ pending_approval_requests AS (
               const repositoryIdentities = yield* resolveRepositoryIdentitiesForProjects(
                 projectRows.filter((row) => activeProjectIds.has(row.projectId)),
               );
+              const gitRoots = yield* resolveGitRootsForProjects(
+                projectRows.filter((row) => activeProjectIds.has(row.projectId)),
+              );
               const latestTurnByThread = new Map(
                 latestTurnRows.map((row) => [row.threadId, mapLatestTurn(row)] as const),
               );
@@ -2835,7 +2867,11 @@ pending_approval_requests AS (
                 projects: Arr.filterMap(projectRows, (row) =>
                   row.deletedAt === null && activeProjectIds.has(row.projectId)
                     ? Result.succeed(
-                        mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
+                        mapProjectShellRow(
+                          row,
+                          repositoryIdentities.get(row.projectId) ?? null,
+                          gitRoots.get(row.projectId) ?? null,
+                        ),
                       )
                     : Result.failVoid,
                 ),
@@ -3011,9 +3047,18 @@ pending_approval_requests AS (
         ),
       ),
       Effect.flatMap((projects) =>
-        resolveRepositoryIdentitiesForProjects(projects).pipe(
-          Effect.map((identities) =>
-            projects.map((row) => mapProjectShellRow(row, identities.get(row.projectId) ?? null)),
+        Effect.all([
+          resolveRepositoryIdentitiesForProjects(projects),
+          resolveGitRootsForProjects(projects),
+        ]).pipe(
+          Effect.map(([identities, roots]) =>
+            projects.map((row) =>
+              mapProjectShellRow(
+                row,
+                identities.get(row.projectId) ?? null,
+                roots.get(row.projectId) ?? null,
+              ),
+            ),
           ),
         ),
       ),
@@ -3031,13 +3076,14 @@ pending_approval_requests AS (
       Effect.flatMap((option) =>
         Option.isNone(option)
           ? Effect.succeed(Option.none<OrchestrationProjectShell>())
-          : repositoryIdentityResolver
-              .resolve(option.value.workspaceRoot)
-              .pipe(
-                Effect.map((repositoryIdentity) =>
-                  Option.some(mapProjectShellRow(option.value, repositoryIdentity)),
-                ),
+          : Effect.all([
+              repositoryIdentityResolver.resolve(option.value.workspaceRoot),
+              repositoryIdentityResolver.resolveRoot(option.value.workspaceRoot),
+            ]).pipe(
+              Effect.map(([repositoryIdentity, gitRootPath]) =>
+                Option.some(mapProjectShellRow(option.value, repositoryIdentity, gitRootPath)),
               ),
+            ),
       ),
     );
 

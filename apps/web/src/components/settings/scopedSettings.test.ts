@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
+import type { SidebarProjectSnapshot } from "../../sidebarProjectCatalog";
 import {
   listProjectOverrides,
   persistScopedSettingsPatch,

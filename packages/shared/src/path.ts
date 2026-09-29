@@ -53,3 +53,27 @@ export function normalizeProjectPathForComparison(value: string): string {
   }
   return normalized;
 }
+
+/** Keep a project's subdirectory when a thread runs in a Git worktree. */
+export function resolveProjectCwdInWorktree(input: {
+  readonly workspaceRoot: string;
+  readonly repositoryRoot?: string | null | undefined;
+  readonly worktreePath?: string | null | undefined;
+}): string {
+  const worktreePath = input.worktreePath;
+  if (!worktreePath) return input.workspaceRoot;
+  if (!input.repositoryRoot) return worktreePath;
+
+  const project = normalizeProjectPathForComparison(input.workspaceRoot);
+  const repository = normalizeProjectPathForComparison(input.repositoryRoot);
+  if (project === repository) return worktreePath;
+  const repositorySeparator = repository.includes("\\") ? "\\" : "/";
+  const repositoryPrefix = repository.endsWith(repositorySeparator)
+    ? repository
+    : `${repository}${repositorySeparator}`;
+  if (!project.startsWith(repositoryPrefix)) return worktreePath;
+
+  const relative = project.slice(repositoryPrefix.length).replaceAll("\\", "/");
+  const separator = isWindowsAbsolutePath(worktreePath) ? "\\" : "/";
+  return `${normalizeProjectPathForDispatch(worktreePath)}${separator}${relative.replaceAll("/", separator)}`;
+}

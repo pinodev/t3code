@@ -1,5 +1,6 @@
 import * as Encoding from "effect/Encoding";
 import { CheckpointRef, ProjectId, type ThreadId } from "@t3tools/contracts";
+import { resolveProjectCwdInWorktree } from "@t3tools/shared/path";
 
 const CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
 
@@ -17,12 +18,15 @@ export function resolveThreadWorkspaceCwd(input: {
   readonly projects: ReadonlyArray<{
     readonly id: ProjectId;
     readonly workspaceRoot: string;
+    readonly gitRootPath?: string | null | undefined;
+    readonly repositoryIdentity?: { readonly rootPath?: string | undefined } | null | undefined;
   }>;
 }): string | undefined {
-  const worktreeCwd = input.thread.worktreePath ?? undefined;
-  if (worktreeCwd) {
-    return worktreeCwd;
-  }
-
-  return input.projects.find((project) => project.id === input.thread.projectId)?.workspaceRoot;
+  const project = input.projects.find((candidate) => candidate.id === input.thread.projectId);
+  if (!project) return input.thread.worktreePath ?? undefined;
+  return resolveProjectCwdInWorktree({
+    workspaceRoot: project.workspaceRoot,
+    repositoryRoot: project.gitRootPath ?? project.repositoryIdentity?.rootPath,
+    worktreePath: input.thread.worktreePath,
+  });
 }

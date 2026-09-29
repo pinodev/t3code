@@ -1,8 +1,4 @@
-import type {
-  EnvironmentId,
-  SidebarProjectGroupingMode,
-  SidebarThreadSortOrder,
-} from "@t3tools/contracts";
+import type { EnvironmentId, SidebarThreadSortOrder } from "@t3tools/contracts";
 import {
   DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
   DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
@@ -25,10 +21,6 @@ export interface HomeListOptions {
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
-}
-
-export interface ResolvedHomeListOptions extends HomeListOptions {
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
 }
 
 export const PROJECT_SORT_OPTIONS: ReadonlyArray<{
@@ -61,23 +53,14 @@ function defaultHomeListOptions(): HomeListOptions {
 interface HomeListOptionsContextValue {
   readonly options: HomeListOptions;
   readonly setOptions: Dispatch<SetStateAction<HomeListOptions>>;
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
 }
 
 const HomeListOptionsContext = createContext<HomeListOptionsContextValue | null>(null);
 
 /** Keeps list preferences stable while the app moves between compact and split shells. */
-export function HomeListOptionsProvider({
-  children,
-  projectGroupingMode,
-}: PropsWithChildren<{
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
-}>) {
+export function HomeListOptionsProvider({ children }: PropsWithChildren) {
   const [options, setOptions] = useState<HomeListOptions>(defaultHomeListOptions);
-  const value = useMemo(
-    () => ({ options, setOptions, projectGroupingMode }),
-    [options, projectGroupingMode],
-  );
+  const value = useMemo(() => ({ options, setOptions }), [options]);
   return createElement(HomeListOptionsContext, { value }, children);
 }
 
@@ -112,10 +95,7 @@ export function useHomeListOptions(availableEnvironmentIds: ReadonlySet<Environm
     selectedEnvironmentId === options.selectedEnvironmentId
       ? options
       : { ...options, selectedEnvironmentId };
-  const resolvedOptions: ResolvedHomeListOptions = {
-    ...availableOptions,
-    projectGroupingMode: shared?.projectGroupingMode ?? "repository",
-  };
+  const resolvedOptions = availableOptions;
 
   const setSelectedEnvironmentId = useCallback((value: EnvironmentId | null) => {
     setOptions((current) => ({ ...current, selectedEnvironmentId: value }));

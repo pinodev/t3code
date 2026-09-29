@@ -2,6 +2,7 @@ import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
 } from "@t3tools/shared/usageLimits";
+import { resolveProjectCwdInWorktree } from "@t3tools/shared/path";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -3163,7 +3164,12 @@ const makeWsRpcLayer = (
               }
               return yield* issueAssetUrl({
                 resource: input.resource,
-                workspaceRoot: thread.value.worktreePath ?? project.value.workspaceRoot,
+                workspaceRoot: resolveProjectCwdInWorktree({
+                  workspaceRoot: project.value.workspaceRoot,
+                  repositoryRoot:
+                    project.value.gitRootPath ?? project.value.repositoryIdentity?.rootPath,
+                  worktreePath: thread.value.worktreePath,
+                }),
               });
             }),
             { "rpc.aggregate": "workspace" },

@@ -236,13 +236,22 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       });
 
       yield* git(gitDir, ["init"]);
+      const path = yield* Path.Path;
+      const nestedDir = path.join(gitDir, "nested");
+      yield* fileSystem.makeDirectory(nestedDir);
 
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const nonGitIdentity = yield* resolver.resolve(nonGitDir);
       const noRemoteIdentity = yield* resolver.resolve(gitDir);
+      const nonGitRoot = yield* resolver.resolveRoot(nonGitDir);
+      const noRemoteRoot = yield* resolver.resolveRoot(nestedDir);
 
       expect(nonGitIdentity).toBeNull();
       expect(noRemoteIdentity).toBeNull();
+      expect(nonGitRoot).toBeNull();
+      expect(normalizeResolvedPath(NodeFS.realpathSync.native(noRemoteRoot!))).toBe(
+        normalizeResolvedPath(NodeFS.realpathSync.native(gitDir)),
+      );
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 

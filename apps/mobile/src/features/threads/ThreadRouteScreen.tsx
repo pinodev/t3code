@@ -618,7 +618,11 @@ function ThreadRouteContent(
         threadDetailWorktreePath: selectedThreadDetailWorktreePath,
       });
       const cwd = projectScriptCwd({
-        project: { cwd: selectedThreadProject.workspaceRoot },
+        project: {
+          cwd: selectedThreadProject.workspaceRoot,
+          repositoryRoot:
+            selectedThreadProject.gitRootPath ?? selectedThreadProject.repositoryIdentity?.rootPath,
+        },
         worktreePath: preferredWorktreePath,
       });
       const env = projectScriptRuntimeEnv({

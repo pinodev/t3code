@@ -481,18 +481,15 @@ describe("ClientSettings environment identification", () => {
 });
 
 describe("ClientSettings sidebar", () => {
-  it("defaults to the current sidebar", () => {
-    expect(decodeClientSettings({}).legacySidebarEnabled).toBe(false);
-  });
-
-  it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
+  it("drops retired sidebar and grouping settings", () => {
     const decoded = decodeClientSettings({
-      sidebarV2Enabled: false,
-      sidebarV2ConfiguredByUser: true,
+      legacySidebarEnabled: true,
+      sidebarProjectGroupingMode: "repository",
+      sidebarProjectGroupingOverrides: { project: "repository" },
     });
-    expect(decoded.legacySidebarEnabled).toBe(false);
-    expect(decoded).not.toHaveProperty("sidebarV2Enabled");
-    expect(decoded).not.toHaveProperty("sidebarV2ConfiguredByUser");
+    expect(decoded).not.toHaveProperty("legacySidebarEnabled");
+    expect(decoded).not.toHaveProperty("sidebarProjectGroupingMode");
+    expect(decoded).not.toHaveProperty("sidebarProjectGroupingOverrides");
   });
 
   it("drops the retired compact sidebar keys for users who opted in", () => {
@@ -501,13 +498,6 @@ describe("ClientSettings sidebar", () => {
     expect(decoded).not.toHaveProperty("compactSidebarEnabled");
     expect(decoded).not.toHaveProperty("sidebarCompactThreadRows");
     expect(decodeClientSettingsPatch(stored)).toEqual({});
-  });
-
-  it("preserves an explicit legacy sidebar opt-in", () => {
-    expect(decodeClientSettings({ legacySidebarEnabled: true }).legacySidebarEnabled).toBe(true);
-    expect(decodeClientSettingsPatch({ legacySidebarEnabled: true }).legacySidebarEnabled).toBe(
-      true,
-    );
   });
 
   it("keeps unpin confirmation opt-in and patchable", () => {

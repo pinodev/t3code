@@ -1,6 +1,6 @@
 import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
 
-import type { SidebarProjectSnapshot } from "~/sidebarProjectGrouping";
+import type { SidebarProjectSnapshot } from "~/sidebarProjectCatalog";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 

@@ -19,7 +19,7 @@ import { readLocalApi } from "../../localApi";
 import {
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
-} from "../../sidebarProjectGrouping";
+} from "../../sidebarProjectCatalog";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";

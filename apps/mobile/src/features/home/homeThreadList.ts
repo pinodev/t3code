@@ -3,7 +3,7 @@ import {
   buildProjectGroups,
   derivePhysicalProjectKey,
   deriveProjectGroupLabel,
-} from "@t3tools/client-runtime/state/project-grouping";
+} from "@t3tools/client-runtime/state/project-catalog";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -17,7 +17,6 @@ import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-searc
 import type {
   EnvironmentId,
   ScopedProjectRef,
-  SidebarProjectGroupingMode,
   SidebarProjectSortOrder,
   SidebarThreadSortOrder,
 } from "@t3tools/contracts";
@@ -52,17 +51,12 @@ function getProjectSortTimestamp(
 export function buildHomeProjectScopes(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly environmentId: EnvironmentId | null;
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
 }): ReadonlyArray<HomeProjectScope> {
   const projects = input.projects.filter(
     (project) => input.environmentId === null || project.environmentId === input.environmentId,
   );
   return buildProjectGroups({
     projects,
-    settings: {
-      sidebarProjectGroupingMode: input.projectGroupingMode,
-      sidebarProjectGroupingOverrides: {},
-    },
   }).map((group) => {
     return {
       key: group.key,
@@ -215,7 +209,6 @@ export function buildHomeThreadGroups(input: {
   readonly matchedThreadKeys?: ReadonlySet<string>;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
   /** Current time used for the recency window; defaults to now. Injectable for tests. */
   readonly now?: number;
 }): ReadonlyArray<HomeThreadGroup> {
