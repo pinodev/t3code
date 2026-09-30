@@ -8,13 +8,16 @@ import {
   type ErrorComponentProps,
   useLocation,
   useNavigate,
+  useMatch,
   useRouter,
 } from "@tanstack/react-router";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
-import { resolveServerBackedAppDisplayName } from "../branding.logic";
+import { formatThreadDocumentTitle, resolveServerBackedAppDisplayName } from "../branding.logic";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { resolveThreadRouteRef } from "../threadRoutes";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
@@ -54,13 +57,13 @@ import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { shellEnvironment } from "../state/shell";
 import { useAtomValue } from "@effect/atom-react";
 import { useAtomCommand } from "../state/use-atom-command";
-import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import { useEnvironment, useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
   primaryServerConfigAtom,
   primaryServerConfigEventAtom,
   primaryServerWelcomeAtom,
 } from "../state/server";
-import { setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
+import { setActiveEnvironmentId, useActiveEnvironmentId, useThreadShell } from "../state/entities";
 import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
@@ -310,6 +313,16 @@ function FontAppearanceSync() {
 }
 
 function DocumentTitleSync() {
+  const threadMatch = useMatch({ from: "/_chat/$environmentId/$threadId", shouldThrow: false });
+  const draftMatch = useMatch({ from: "/_chat/draft/$draftId", shouldThrow: false });
+  const threadRef = resolveThreadRouteRef(threadMatch?.params ?? {});
+  const thread = useThreadShell(threadRef);
+  const draftSession = useComposerDraftStore((store) =>
+    draftMatch ? store.getDraftSession(DraftId.make(draftMatch.params.draftId)) : null,
+  );
+  const environment = useEnvironment(
+    threadRef?.environmentId ?? draftSession?.environmentId ?? null,
+  );
   const primaryServerVersion =
     useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
   const title = resolveServerBackedAppDisplayName({
@@ -320,8 +333,12 @@ function DocumentTitleSync() {
   });
 
   useEffect(() => {
-    document.title = title;
-  }, [title]);
+    document.title = formatThreadDocumentTitle({
+      appTitle: title,
+      threadTitle: thread?.title ?? (draftSession ? "New thread" : null),
+      environmentLabel: environment?.label ?? null,
+    });
+  }, [draftSession, environment?.label, thread?.title, title]);
 
   return null;
 }

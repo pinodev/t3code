@@ -33,7 +33,7 @@ import ProjectScriptsControl, {
 } from "../ProjectScriptsControl";
 import { OpenInPicker } from "./OpenInPicker";
 import { useRemoteOpenState, type RemoteOpenMode } from "../../remoteOpen";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 import { readLocalApi } from "~/localApi";
@@ -157,6 +157,7 @@ export const ChatHeader = memo(function ChatHeader({
   }, [panelAnimationDurationMs, panelAnimationsActive]);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const activeProjectName = activeProject?.title;
+  const environmentLabel = useEnvironment(activeThreadEnvironmentId)?.label ?? "Unknown computer";
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const fileScripts = useT3ProjectFileScripts(
     activeThreadEnvironmentId,
@@ -340,6 +341,11 @@ export const ChatHeader = memo(function ChatHeader({
                 >
                   <ProjectFavicon project={activeProject} className="size-3.5" />
                   <span className="max-w-40 truncate">{activeProjectName}</span>
+                  {environmentLabel ? (
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {environmentLabel}
+                    </span>
+                  ) : null}
                 </TooltipTrigger>
                 <TooltipPopup side="top">New thread in {activeProjectName}</TooltipPopup>
               </Tooltip>

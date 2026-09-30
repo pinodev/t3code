@@ -409,7 +409,7 @@ function ProjectDetail({
         <SettingsSection id="project-overview" title="Project" hideTitle>
           <SettingsRow
             title="Name"
-            description="The shared name for this project group in the sidebar and thread lists."
+            description="Name shown for this project in the sidebar and thread lists."
             control={
               <Input
                 key={`${group.projectKey}:${group.displayName}`}

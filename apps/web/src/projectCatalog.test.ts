@@ -5,6 +5,7 @@ import { derivePhysicalProjectKey } from "./logicalProject";
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
+  projectComputerLabel,
 } from "./sidebarProjectCatalog";
 import type { Project } from "./types";
 
@@ -49,7 +50,7 @@ describe("sidebar project catalog", () => {
     const snapshots = buildSidebarProjectSnapshots({
       projects,
       primaryEnvironmentId,
-      resolveEnvironmentLabel: (id) => id,
+      resolveEnvironmentLabel: (id) => (id === primaryEnvironmentId ? "PS26" : "PS252"),
     });
 
     expect(snapshots).toHaveLength(4);
@@ -61,6 +62,8 @@ describe("sidebar project catalog", () => {
     ]);
     expect(snapshots.every((snapshot) => snapshot.memberProjects.length === 1)).toBe(true);
     expect(snapshots[3]?.memberProjects[0]?.environmentLabel).toBe("PS252");
+    expect(projectComputerLabel(snapshots[0]!)).toBe("PS26");
+    expect(projectComputerLabel(snapshots[3]!)).toBe("PS252");
   });
 
   it("routes project pickers to their exact workspace", () => {

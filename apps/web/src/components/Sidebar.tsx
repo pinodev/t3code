@@ -107,7 +107,6 @@ import {
 import { getProjectOrderKey } from "../logicalProject";
 import {
   buildSidebarProjectSnapshots,
-  projectGroupsSpanEnvironments,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectCatalog";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -1204,14 +1203,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     ? getTriggerDisplayModelLabel(selectedModel)
     : thread.modelSelection.model;
 
-  // The local environment is "this machine" and needs no marker; every other
-  // one gets its machine glyph. With no local environment (the hosted app)
-  // that is every thread, which is the point: the glyph is what tells rows on
-  // different machines apart.
+  // Keep the machine visible even when the project name is truncated.
   const isRemote = thread.environmentId !== props.currentEnvironmentId;
-  const projectContextLabel = [props.projectDisplayName, props.environmentLabel]
-    .filter((label): label is string => Boolean(label))
-    .join(" · ");
 
   const detailsTooltip = (
     <SidebarThreadTooltip
@@ -1618,9 +1611,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             </span>
             {draftIndicator}
             {title}
-            {projectContextLabel ? (
-              <span className="max-w-28 shrink-0 truncate text-[11px] text-secondary-label">
-                {projectContextLabel}
+            {props.projectDisplayName ? (
+              <span className="max-w-20 shrink-0 truncate text-[11px] text-secondary-label">
+                {props.projectDisplayName}
+              </span>
+            ) : null}
+            {props.environmentLabel ? (
+              <span className="shrink-0 text-[11px] text-secondary-label">
+                {props.environmentLabel}
               </span>
             ) : null}
             {pinIndicator}
@@ -1769,18 +1767,23 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {props.project ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
-              {projectContextLabel ? (
+              {props.projectDisplayName ? (
                 <span
                   className={cn(
                     "min-w-0 flex-1 truncate text-secondary-label text-xs",
                     shouldRecede ? "font-normal" : "font-medium",
                   )}
                 >
-                  {projectContextLabel}
+                  {props.projectDisplayName}
                 </span>
               ) : (
                 <span className="flex-1" />
               )}
+              {props.environmentLabel ? (
+                <span className="shrink-0 text-xs text-secondary-label">
+                  {props.environmentLabel}
+                </span>
+              ) : null}
               {pinIndicator}
               {/* The visible state owns this slot's width: status at rest,
                   actions on hover/keyboard focus or while the popover is open. Keeping
@@ -2365,13 +2368,6 @@ export default function Sidebar() {
         label: project.displayName,
       })),
     ],
-    [projectGroups],
-  );
-  // Same-named projects on two machines are only told apart by where they
-  // live, so rows on another machine carry its icon once the catalog spans
-  // more than one environment; a single-machine catalog stays as it was.
-  const showProjectEnvironments = useMemo(
-    () => projectGroupsSpanEnvironments(projectGroups),
     [projectGroups],
   );
   const projectGroupByScopeKey = useMemo(
@@ -4480,10 +4476,9 @@ export default function Sidebar() {
                               <FolderIcon className="size-4 shrink-0" />
                             )}
                             <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
-                            {project && showProjectEnvironments ? (
+                            {project ? (
                               <ProjectEnvironmentBadge
                                 group={project}
-                                primaryEnvironmentId={primaryEnvironmentId}
                                 machineByEnvironmentId={environmentMachineById}
                               />
                             ) : null}
@@ -4562,7 +4557,9 @@ export default function Sidebar() {
                             `${thread.environmentId}:${thread.projectId}`,
                           ) ?? null
                         }
-                        environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
+                        environmentLabel={
+                          environmentLabelById.get(thread.environmentId) ?? "Unknown computer"
+                        }
                         environmentMachine={
                           environmentMachineById.get(thread.environmentId) ?? "server"
                         }
@@ -4690,7 +4687,7 @@ export default function Sidebar() {
                             }
                             currentEnvironmentId={primaryEnvironmentId}
                             environmentLabel={
-                              environmentLabelById.get(thread.environmentId) ?? null
+                              environmentLabelById.get(thread.environmentId) ?? "Unknown computer"
                             }
                             environmentMachine={
                               environmentMachineById.get(thread.environmentId) ?? "server"

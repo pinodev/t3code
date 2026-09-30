@@ -772,11 +772,7 @@ function OpenCommandPaletteDialog(props: {
             environment.environmentId,
             {
               kind: isLocal ? "local" : "remote",
-              label: isPrimary
-                ? "Local"
-                : isLocal
-                  ? `${environment.label} (Local)`
-                  : environment.label,
+              label: environment.label,
               machine: resolveEnvironmentMachineKind(environment.serverConfig),
             },
           ] as const;
@@ -1482,9 +1478,15 @@ function OpenCommandPaletteDialog(props: {
         });
       }
 
-      return [{ value: `sources:${environmentId}`, label: "Sources", items: sourceItems }];
+      return [
+        {
+          value: `sources:${environmentId}`,
+          label: `Create project on ${environmentLabelById.get(environmentId) ?? environmentId}`,
+          items: sourceItems,
+        },
+      ];
     },
-    [openSourceControlSettings, startAddProjectBrowse, startAddProjectClone],
+    [environmentLabelById, openSourceControlSettings, startAddProjectBrowse, startAddProjectClone],
   );
 
   const startAddProjectSourceSelection = useCallback(
@@ -2775,6 +2777,11 @@ function OpenCommandPaletteDialog(props: {
       showBackHint={isSubmenu}
       value={query}
     >
+      {(isBrowsing || addProjectCloneFlow !== null) && browseEnvironmentId ? (
+        <div className="px-4 pt-2 text-xs text-muted-foreground">
+          Project on {environmentLabelById.get(browseEnvironmentId) ?? browseEnvironmentId}
+        </div>
+      ) : null}
       {remoteProjectContext ? (
         <div className="p-2 pb-0">
           <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Repository</div>

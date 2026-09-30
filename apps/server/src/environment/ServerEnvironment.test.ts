@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
@@ -75,6 +77,28 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
 });
 
 it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
+  it.effect("rereads host aliases for each descriptor", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-host-alias-test-",
+      });
+      const etcDir = `${baseDir}/etc`;
+      yield* fileSystem.makeDirectory(etcDir, { recursive: true });
+      const aliasesPath = `${etcDir}/host-aliases.json`;
+      yield* fileSystem.writeFileString(aliasesPath, `{"${NodeOS.hostname()}":"Ps252"}`);
+      const [first, second] = yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        const first = yield* serverEnvironment.getDescriptor;
+        yield* fileSystem.writeFileString(aliasesPath, `{"${NodeOS.hostname()}":"Other"}`);
+        return [first, yield* serverEnvironment.getDescriptor] as const;
+      }).pipe(Effect.provide(makeServerEnvironmentLayer(baseDir)));
+
+      expect(first.label).toBe("PS252");
+      expect(second.label).toBe("OTHER");
+    }),
+  );
+
   it.effect.each([
     { name: "missing", content: undefined },
     { name: "empty", content: "" },

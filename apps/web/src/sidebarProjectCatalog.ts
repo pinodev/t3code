@@ -45,6 +45,12 @@ export interface SidebarProjectPickerEntry {
   isPreferred: boolean;
 }
 
+export function projectComputerLabel(
+  group: Pick<SidebarProjectSnapshot, "memberProjects">,
+): string {
+  return group.memberProjects[0]?.environmentLabel ?? "Unknown computer";
+}
+
 export function buildSidebarProjectSnapshots(input: {
   projects: ReadonlyArray<Project>;
   primaryEnvironmentId: EnvironmentId | null;

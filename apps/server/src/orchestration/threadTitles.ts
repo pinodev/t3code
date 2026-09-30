@@ -1,17 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
+import { resolveHostAlias } from "../hostAliases.ts";
+export { parseHostAliases } from "../hostAliases.ts";
 
 export const DEFAULT_THREAD_TITLE = "New thread";
-
-export function parseHostAliases(value: unknown): Record<string, string> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
-  return Object.fromEntries(
-    Object.entries(value).filter(
-      (entry): entry is [string, string] =>
-        typeof entry[1] === "string" && entry[1].trim().length > 0,
-    ),
-  );
-}
 
 export function settledThreadTitle(
   title: string,
@@ -30,10 +22,7 @@ export function settledThreadTitle(
     "i",
   );
   if (existingPrefix.test(title)) return title;
-  const host =
-    Object.entries(aliases).find(([name]) => name.toLowerCase() === hostname.toLowerCase())?.[1] ??
-    hostname;
-  return `(${host.toUpperCase()}) ${projectDir} - ${title}`;
+  return `(${resolveHostAlias(hostname, aliases)}) ${projectDir} - ${title}`;
 }
 
 export function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolean {

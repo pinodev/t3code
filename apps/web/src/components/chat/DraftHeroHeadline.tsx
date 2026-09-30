@@ -11,7 +11,7 @@ import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
-  projectGroupsSpanEnvironments,
+  projectComputerLabel,
 } from "~/sidebarProjectCatalog";
 import { useProjects, useThreadShells } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
@@ -75,13 +75,6 @@ export function DraftHeroHeadline({
       ),
     [environmentLabelById, primaryEnvironmentId, projectSortOrder, projects, threads],
   );
-  // Same-named projects on two machines are only told apart by where they
-  // live, so rows on another machine carry its icon once the catalog spans
-  // more than one environment; a single-machine catalog stays as it was.
-  const showProjectEnvironments = useMemo(
-    () => projectGroupsSpanEnvironments(projectGroups),
-    [projectGroups],
-  );
   const environmentMachineById = useMemo(
     () =>
       new Map(
@@ -128,11 +121,16 @@ export function DraftHeroHeadline({
           render={
             <MenuTrigger
               aria-label={hasResolvedProject ? "Change project" : "Choose a project"}
-              className="pointer-events-auto inline-block max-w-64 truncate border-foreground/60 border-b border-dotted align-baseline text-foreground transition-colors hover:border-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              className="pointer-events-auto inline-flex max-w-64 items-center border-foreground/60 border-b border-dotted align-baseline text-foreground transition-colors hover:border-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             />
           }
         >
-          {activeProjectDisplayName ?? "Choose a project"}
+          <span className="min-w-0 truncate">{activeProjectDisplayName ?? "Choose a project"}</span>
+          {activeProjectGroup ? (
+            <span className="ml-1 shrink-0 text-xs text-muted-foreground">
+              {projectComputerLabel(activeProjectGroup)}
+            </span>
+          ) : null}
         </TooltipTrigger>
         {activeProjectDisplayName ? (
           <TooltipPopup side="top" className="max-w-80">
@@ -195,13 +193,10 @@ export function DraftHeroHeadline({
                     {group.displayName}
                   </TooltipPopup>
                 </Tooltip>
-                {showProjectEnvironments ? (
-                  <ProjectEnvironmentBadge
-                    group={group}
-                    primaryEnvironmentId={primaryEnvironmentId}
-                    machineByEnvironmentId={environmentMachineById}
-                  />
-                ) : null}
+                <ProjectEnvironmentBadge
+                  group={group}
+                  machineByEnvironmentId={environmentMachineById}
+                />
               </MenuRadioItem>
             );
           })}

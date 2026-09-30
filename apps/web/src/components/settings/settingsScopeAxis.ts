@@ -35,21 +35,33 @@ export function projectAxisValue(search: SettingsScopeSearch): string {
   return search.project ?? ALL_PROJECTS_VALUE;
 }
 
-/** Choosing an environment keeps the project; a pre-existing checkout narrowing is dropped. */
+/** A project belongs to one computer, so changing computers clears the project. */
 export function selectEnvironmentAxis(
-  search: SettingsScopeSearch,
+  _search: SettingsScopeSearch,
   value: string,
 ): SettingsScopeSearch {
   const next: SettingsScopeSearch = {};
-  if (search.project) next.project = search.project;
   if (value !== ALL_ENVIRONMENTS_VALUE) next.machine = value;
   return next;
 }
 
-/** Choosing a project keeps the environment axis. */
-export function selectProjectAxis(search: SettingsScopeSearch, value: string): SettingsScopeSearch {
+/** Choosing a project selects its computer as well. */
+export function selectProjectAxis(
+  search: SettingsScopeSearch,
+  value: string,
+  projectEnvironmentId?: string,
+): SettingsScopeSearch {
   const next: SettingsScopeSearch = {};
   if (value !== ALL_PROJECTS_VALUE) next.project = value;
-  if (search.machine) next.machine = search.machine;
+  if (projectEnvironmentId ?? search.machine) next.machine = projectEnvironmentId ?? search.machine;
   return next;
+}
+
+export function projectsForEnvironment<T extends { readonly environmentId: string }>(
+  groups: readonly T[],
+  environmentId: string | undefined,
+): T[] {
+  return environmentId
+    ? groups.filter((group) => group.environmentId === environmentId)
+    : [...groups];
 }

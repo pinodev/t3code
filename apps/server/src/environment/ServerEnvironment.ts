@@ -3,7 +3,11 @@ import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessArchitecture,
+  HostProcessHostname,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -18,6 +22,7 @@ import { readAgentActivityPublishingActive } from "../cloud/config.ts";
 import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
+import { readHostAliases, resolveHostAlias } from "../hostAliases.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
@@ -182,6 +187,7 @@ const makeIdentity = Effect.gen(function* () {
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
+  const fileSystem = yield* FileSystem.FileSystem;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const identity = yield* ServerEnvironmentIdentity;
@@ -189,7 +195,8 @@ export const make = Effect.gen(function* () {
   const hostArchitecture = yield* HostProcessArchitecture;
   const environmentId = yield* identity.getEnvironmentId;
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
-  const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
+  const hostname = (yield* HostProcessHostname).trim();
+  const fallbackLabel = hostname ? null : yield* resolveServerEnvironmentLabel({ cwdBaseName });
   const machine = yield* detectServerEnvironmentMachineKind();
   const launcher = yield* resolveServiceLauncherMode();
   const serverSelfUpdate = resolveServerSelfUpdateCapability({
@@ -205,7 +212,7 @@ export const make = Effect.gen(function* () {
 
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
-    label,
+    label: fallbackLabel ?? hostname.toUpperCase(),
     platform: {
       os: platformOs(hostPlatform),
       arch: platformArch(hostArchitecture),
@@ -253,12 +260,17 @@ export const make = Effect.gen(function* () {
     // The publish opt-in and relay link change at runtime (`t3 connect
     // publish`, the client settings toggle), so the capability is read per
     // descriptor request rather than baked in at startup.
-    getDescriptor: readAgentActivityPublishingActive(secrets).pipe(
-      Effect.map((agentActivityPublishing) => ({
+    getDescriptor: Effect.gen(function* () {
+      const aliases = yield* readHostAliases(serverConfig.baseDir).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      );
+      const agentActivityPublishing = yield* readAgentActivityPublishingActive(secrets);
+      return {
         ...descriptor,
+        label: hostname ? resolveHostAlias(hostname, aliases) : descriptor.label,
         capabilities: { ...descriptor.capabilities, agentActivityPublishing },
-      })),
-    ),
+      };
+    }),
   });
 });
 

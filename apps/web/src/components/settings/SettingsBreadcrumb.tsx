@@ -3,7 +3,7 @@ import { LayersIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
-import type { SidebarProjectSnapshot } from "../../sidebarProjectCatalog";
+import { projectComputerLabel, type SidebarProjectSnapshot } from "../../sidebarProjectCatalog";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -28,6 +28,7 @@ import {
   ALL_PROJECTS_VALUE,
   environmentAxisValue,
   projectAxisValue,
+  projectsForEnvironment,
   selectEnvironmentAxis,
   selectProjectAxis,
   settingsScopeEnvironmentLabel,
@@ -54,9 +55,7 @@ export interface SettingsScopeBreadcrumbProps {
 /**
  * `Settings / Section / Environment / Project`. The last two crumbs are the
  * targets a change applies to and read like the usage page's filter: muted at
- * "all", foreground once narrowed. A project is the same project on every
- * environment, so the environment crumb alone decides where a project
- * override is written.
+ * "all", foreground once narrowed. Each project belongs to one environment.
  */
 export function SettingsBreadcrumb({
   pathname,
@@ -135,7 +134,11 @@ function EnvironmentScopeMenu({
   const resolved = resolveSettingsScope(value, groups, environments);
   const environmentValue = environmentAxisValue(
     value,
-    resolved.kind === "checkout" ? resolved.environmentId : null,
+    resolved.kind === "checkout"
+      ? resolved.environmentId
+      : resolved.kind === "project"
+        ? resolved.group.environmentId
+        : null,
   );
   const selected = environments.find(
     (environment) => environment.environmentId === environmentValue,
@@ -199,7 +202,13 @@ function EnvironmentScopeMenu({
 }
 
 function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeBreadcrumbProps) {
-  const selected = groups.find((group) => group.projectKey === value.project);
+  const selected = groups.find(
+    (group) =>
+      group.projectKey === value.project &&
+      (value.machine === undefined || group.environmentId === value.machine),
+  );
+  const environmentId = value.machine ?? selected?.environmentId;
+  const visibleGroups = projectsForEnvironment(groups, environmentId);
   return (
     <ScopeMenu
       ariaLabel="Project scope"
@@ -210,7 +219,10 @@ function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeBreadcrumbPr
       <MenuRadioGroup
         value={projectAxisValue(value)}
         onValueChange={(next) => {
-          if (typeof next === "string") onChange(selectProjectAxis(value, next));
+          if (typeof next === "string") {
+            const project = groups.find((group) => group.projectKey === next);
+            onChange(selectProjectAxis(value, next, project?.environmentId));
+          }
         }}
       >
         <MenuRadioItem value={ALL_PROJECTS_VALUE}>
@@ -220,11 +232,14 @@ function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeBreadcrumbPr
           </span>
         </MenuRadioItem>
         <MenuSeparator />
-        {groups.map((group) => (
+        {visibleGroups.map((group) => (
           <MenuRadioItem key={group.projectKey} value={group.projectKey}>
             <span className="flex min-w-0 items-center gap-2">
               <ProjectFavicon project={group} className="size-3.5" />
               <span className="min-w-0 flex-1 truncate">{group.displayName}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {projectComputerLabel(group)}
+              </span>
               <MenuRadioItemIndicator />
             </span>
           </MenuRadioItem>

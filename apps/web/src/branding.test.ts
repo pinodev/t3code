@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  formatThreadDocumentTitle,
   resolveServerBackedAppDisplayName,
   resolveServerBackedAppStageLabel,
 } from "./branding.logic";
@@ -72,6 +73,30 @@ describe("branding", () => {
 });
 
 describe("branding logic", () => {
+  it("puts the computer and active thread first in the browser tab", () => {
+    expect(
+      formatThreadDocumentTitle({
+        appTitle: "T3 Code (Alpha)",
+        threadTitle: "Fix login",
+        environmentLabel: "PS252",
+      }),
+    ).toBe("PS252 · Fix login | T3 Code (Alpha)");
+    expect(
+      formatThreadDocumentTitle({
+        appTitle: "T3 Code (Alpha)",
+        threadTitle: "(PS252) forge - Fix login",
+        environmentLabel: "PS252",
+      }),
+    ).toBe("(PS252) forge - Fix login | T3 Code (Alpha)");
+    expect(
+      formatThreadDocumentTitle({
+        appTitle: "T3 Code (Alpha)",
+        threadTitle: null,
+        environmentLabel: "PS252",
+      }),
+    ).toBe("T3 Code (Alpha)");
+  });
+
   it("returns Nightly for nightly primary server versions", () => {
     expect(
       resolveServerBackedAppStageLabel({

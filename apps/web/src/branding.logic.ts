@@ -36,3 +36,17 @@ export function resolveServerBackedAppDisplayName(input: {
     ? input.fallbackDisplayName
     : formatAppDisplayName({ baseName: input.baseName, stageLabel });
 }
+
+export function formatThreadDocumentTitle(input: {
+  readonly appTitle: string;
+  readonly threadTitle: string | null;
+  readonly environmentLabel: string | null;
+}): string {
+  const threadTitle = input.threadTitle?.trim();
+  if (!threadTitle) return input.appTitle;
+  const environmentLabel = input.environmentLabel?.trim();
+  const titleAlreadyNamesComputer = environmentLabel
+    ? threadTitle.toUpperCase().startsWith(`(${environmentLabel.toUpperCase()}) `)
+    : false;
+  return `${environmentLabel && !titleAlreadyNamesComputer ? `${environmentLabel} · ` : ""}${threadTitle} | ${input.appTitle}`;
+}

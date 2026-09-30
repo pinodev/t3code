@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   environmentAxisValue,
   projectAxisValue,
+  projectsForEnvironment,
   selectEnvironmentAxis,
   selectProjectAxis,
   settingsScopeEnvironmentLabel,
@@ -61,21 +62,33 @@ describe("settings scope axes", () => {
       machine: "second",
     });
     expect(selectEnvironmentAxis({ project: "app" }, "first")).toEqual({
-      project: "app",
       machine: "first",
     });
-    expect(selectEnvironmentAxis({ project: "app", machine: "first" }, "all")).toEqual({
+    expect(selectEnvironmentAxis({ project: "app", machine: "first" }, "all")).toEqual({});
+    expect(selectProjectAxis({ machine: "second" }, "app", "first")).toEqual({
       project: "app",
+      machine: "first",
     });
   });
 
   it("drops a checkout narrowing from older links when either axis changes", () => {
     const checkout = { project: "app", checkout: "app@first", machine: "first" };
     expect(selectEnvironmentAxis(checkout, "second")).toEqual({
-      project: "app",
       machine: "second",
     });
     expect(selectProjectAxis(checkout, "app")).toEqual({ project: "app", machine: "first" });
+  });
+});
+
+describe("projectsForEnvironment", () => {
+  const groups = [
+    { projectKey: "ps26-project", environmentId: "ps26" },
+    { projectKey: "ps252-project", environmentId: "ps252" },
+  ];
+
+  it("shows only projects on the selected computer", () => {
+    expect(projectsForEnvironment(groups, "ps252")).toEqual([groups[1]]);
+    expect(projectsForEnvironment(groups, undefined)).toEqual(groups);
   });
 });
 

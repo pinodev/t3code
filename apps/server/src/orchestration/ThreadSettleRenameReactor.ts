@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 
 import { CommandId, type OrchestrationEvent } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -8,16 +7,16 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
+import { readHostAliases } from "../hostAliases.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts";
-import { parseHostAliases, settledThreadTitle } from "./threadTitles.ts";
+import { settledThreadTitle } from "./threadTitles.ts";
 
 type SettledEvent = Extract<OrchestrationEvent, { type: "thread.settled" }>;
 
@@ -33,9 +32,7 @@ export const make = Effect.gen(function* () {
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const config = yield* ServerConfig.ServerConfig;
-  const fileSystem = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
-  const aliasesPath = NodePath.join(config.baseDir, "etc", "host-aliases.json");
 
   const rename = Effect.fn("ThreadSettleRenameReactor.rename")(function* (event: SettledEvent) {
     const snapshot = yield* snapshots.getShellSnapshot();
@@ -49,16 +46,7 @@ export const make = Effect.gen(function* () {
     const project = snapshot.projects.find((item) => item.id === thread.projectId);
     if (project === undefined) return;
     // Read on every settlement so edits to the shared etc directory apply without a restart.
-    const aliases = yield* fileSystem.readFileString(aliasesPath).pipe(
-      Effect.map((contents) => {
-        try {
-          return parseHostAliases(JSON.parse(contents) as unknown);
-        } catch {
-          return {};
-        }
-      }),
-      Effect.orElseSucceed(() => ({})),
-    );
+    const aliases = yield* readHostAliases(config.baseDir);
     const title = settledThreadTitle(
       thread.title,
       project.workspaceRoot,
