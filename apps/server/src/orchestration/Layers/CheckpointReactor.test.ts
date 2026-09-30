@@ -60,7 +60,10 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
-import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
+import {
+  checkpointRefForThreadTurn,
+  turnLedgerRefForThreadTurn,
+} from "../../checkpointing/Utils.ts";
 import { ProviderValidationError } from "../../provider/Errors.ts";
 import { ServerConfig } from "../../config.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
@@ -1308,7 +1311,16 @@ describe("CheckpointReactor", () => {
       NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "before git\n");
       emit("turn.completed", 1);
       yield* Effect.promise(harness.drain);
-      expect((yield* Effect.promise(harness.readModel)).threads[0]?.checkpoints).toEqual([]);
+      // Without git the turn is still counted, only without a snapshot.
+      expect((yield* Effect.promise(harness.readModel)).threads[0]?.checkpoints).toMatchObject([
+        {
+          turnId: "turn-1",
+          checkpointTurnCount: 1,
+          checkpointRef: turnLedgerRefForThreadTurn(threadId, 1),
+          status: "missing",
+          files: [],
+        },
+      ]);
 
       if (timing === "during a turn") {
         emit("turn.started", 2);
@@ -1345,7 +1357,7 @@ describe("CheckpointReactor", () => {
         });
         expect(yield* harness.nextReceipt).toMatchObject({
           type: "checkpoint.baseline.captured",
-          checkpointTurnCount: 0,
+          checkpointTurnCount: 1,
         });
         emit("turn.started", 2);
         yield* Effect.promise(harness.drain);
@@ -1354,20 +1366,22 @@ describe("CheckpointReactor", () => {
       emit("turn.completed", 2);
       expect(yield* harness.nextReceipt).toMatchObject({
         type: "checkpoint.diff.finalized",
-        checkpointTurnCount: 1,
+        checkpointTurnCount: 2,
       });
       expect(yield* harness.nextReceipt).toMatchObject({ type: "turn.processing.quiesced" });
       yield* Effect.promise(harness.drain);
-      const firstCheckpoint = (yield* Effect.promise(harness.readModel)).threads[0]?.checkpoints[0];
+      const firstCheckpoint = (yield* Effect.promise(
+        harness.readModel,
+      )).threads[0]?.checkpoints.find((checkpoint) => checkpoint.checkpointTurnCount === 2);
       expect(firstCheckpoint?.files).toEqual(
         timing === "between turns"
           ? [{ path: "README.md", kind: "modified", additions: 1, deletions: 1 }]
           : [],
       );
       expect(
-        gitShowFileAtRef(harness.cwd, checkpointRefForThreadTurn(threadId, 1), "README.md"),
+        gitShowFileAtRef(harness.cwd, checkpointRefForThreadTurn(threadId, 2), "README.md"),
       ).toBe("after git\n");
-      expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 0))).toBe(
+      expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 1))).toBe(
         timing === "between turns",
       );
 
@@ -1377,13 +1391,13 @@ describe("CheckpointReactor", () => {
       emit("turn.completed", 3);
       expect(yield* harness.nextReceipt).toMatchObject({
         type: "checkpoint.diff.finalized",
-        checkpointTurnCount: 2,
+        checkpointTurnCount: 3,
       });
       yield* Effect.promise(harness.drain);
       const thread = (yield* Effect.promise(harness.readModel)).threads[0];
-      expect(thread?.checkpoints[1]?.files).toEqual([
-        { path: "README.md", kind: "modified", additions: 1, deletions: 1 },
-      ]);
+      expect(
+        thread?.checkpoints.find((checkpoint) => checkpoint.checkpointTurnCount === 3)?.files,
+      ).toEqual([{ path: "README.md", kind: "modified", additions: 1, deletions: 1 }]);
       expect(
         thread?.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
       ).toBe(false);
@@ -1601,12 +1615,14 @@ describe("CheckpointReactor", () => {
       turnId: asTurnId("turn-after-runtime-failure"),
     });
 
+    // The turn that ran outside the repository is counted without a snapshot,
+    // so the next baseline sits after it.
     await waitForGitRefExists(
       harness.cwd,
-      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
     );
     expect(
-      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0)),
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1)),
     ).toBe(true);
   });
 
@@ -1836,6 +1852,135 @@ describe("CheckpointReactor", () => {
       expect(fork?.settledAt).toBeNull();
     }
   });
+
+  effectIt.effect("counts turns outside a git repository so rewind and fork still work", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ initializeGit: false, seedFilesystemCheckpoints: false }),
+      );
+      const threadId = ThreadId.make("thread-1");
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const emit = (type: "turn.started" | "turn.completed", turn: number) =>
+        harness.provider.emit({
+          type,
+          eventId: EventId.make(`${type}-${turn}`),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt,
+          threadId,
+          turnId: asTurnId(`turn-${turn}`),
+          ...(type === "turn.completed" ? { payload: { state: "completed" } } : {}),
+        });
+      for (const turn of [1, 2]) {
+        emit("turn.started", turn);
+        yield* Effect.promise(harness.drain);
+        emit("turn.completed", turn);
+        yield* Effect.promise(harness.drain);
+      }
+
+      const thread = yield* Effect.promise(() =>
+        waitForThread(harness.readModel, (entry) => entry.checkpoints.length === 2),
+      );
+      expect(
+        thread.checkpoints
+          .map(({ turnId, checkpointTurnCount, checkpointRef, status, files }) => ({
+            turnId,
+            checkpointTurnCount,
+            checkpointRef,
+            status,
+            files,
+          }))
+          .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount),
+      ).toEqual(
+        [1, 2].map((turn) => ({
+          turnId: `turn-${turn}`,
+          checkpointTurnCount: turn,
+          checkpointRef: turnLedgerRefForThreadTurn(threadId, turn),
+          status: "missing",
+          files: [],
+        })),
+      );
+
+      yield* harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-thread-fork-non-repo"),
+        threadId,
+        forkThreadId: ThreadId.make("thread-1-fork"),
+        turnCount: 1,
+        createdAt,
+      });
+      yield* Effect.promise(harness.drain);
+      expect(harness.provider.forkConversation).toHaveBeenCalledWith({
+        threadId,
+        forkThreadId: ThreadId.make("thread-1-fork"),
+        numTurns: 1,
+      });
+      const source = (yield* Effect.promise(harness.readModel)).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(
+        source?.activities.filter((activity) => activity.kind === "thread.fork.failed"),
+      ).toEqual([]);
+    }),
+  );
+
+  effectIt.effect("backfills earlier turns when a thread outside git records its first turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ initializeGit: false, seedFilesystemCheckpoints: false }),
+      );
+      const threadId = ThreadId.make("thread-1");
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      // Turns that finished before the ledger covered this workspace.
+      for (const name of ["a", "b"]) {
+        yield* harness.engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make(`cmd-delta-${name}`),
+          threadId,
+          messageId: MessageId.make(`assistant-${name}`),
+          delta: `answer ${name}`,
+          turnId: asTurnId(`turn-${name}`),
+          createdAt,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make(`cmd-complete-${name}`),
+          threadId,
+          messageId: MessageId.make(`assistant-${name}`),
+          turnId: asTurnId(`turn-${name}`),
+          createdAt,
+        });
+      }
+      for (const type of ["turn.started", "turn.completed"] as const) {
+        harness.provider.emit({
+          type,
+          eventId: EventId.make(`${type}-c`),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt,
+          threadId,
+          turnId: asTurnId("turn-c"),
+          ...(type === "turn.completed" ? { payload: { state: "completed" } } : {}),
+        });
+        yield* Effect.promise(harness.drain);
+      }
+
+      const thread = yield* Effect.promise(() =>
+        waitForThread(harness.readModel, (entry) => entry.checkpoints.length === 3),
+      );
+      expect(
+        thread.checkpoints
+          .map(({ turnId, checkpointTurnCount, assistantMessageId }) => ({
+            turnId,
+            checkpointTurnCount,
+            assistantMessageId,
+          }))
+          .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount),
+      ).toEqual([
+        { turnId: "turn-a", checkpointTurnCount: 1, assistantMessageId: "assistant-a" },
+        { turnId: "turn-b", checkpointTurnCount: 2, assistantMessageId: "assistant-b" },
+        { turnId: "turn-c", checkpointTurnCount: 3, assistantMessageId: "assistant:turn-c" },
+      ]);
+    }),
+  );
 
   it("thread.fork reports a failure activity when the thread has no checkpointed turn", async () => {
     const harness = await createHarness({ initializeGit: false, seedFilesystemCheckpoints: false });

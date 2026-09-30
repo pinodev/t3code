@@ -439,6 +439,13 @@ describe("proactive panels", () => {
       }),
     ).toBe("defer");
   });
+
+  it("does not wait for a snapshot outside a git repository", () => {
+    // Turns there are recorded without a snapshot and stay "missing".
+    for (const checkpoint of [undefined, { status: "missing" as const, files: [] }]) {
+      expect(resolveProactiveTurnDiffAction({ checkpoint, isGitRepo: false })).toBe("ignore");
+    }
+  });
 });
 
 describe("toolGroupConsumesUpwardNavigation", () => {

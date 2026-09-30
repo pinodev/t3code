@@ -10,6 +10,13 @@ export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number
   );
 }
 
+// A turn recorded without a filesystem snapshot (the workspace is not a git
+// repository) still needs a ref in the ledger. This one is not a git ref and
+// never resolves, so file restore and diff treat the turn as having no snapshot.
+export function turnLedgerRefForThreadTurn(threadId: ThreadId, turnCount: number): CheckpointRef {
+  return CheckpointRef.make(`turn-ledger:${Encoding.encodeBase64Url(threadId)}:${turnCount}`);
+}
+
 export function resolveThreadWorkspaceCwd(input: {
   readonly thread: {
     readonly projectId: ProjectId;

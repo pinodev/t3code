@@ -180,6 +180,9 @@ export function resolveProactiveTurnDiffAction(input: {
   checkpoint: Pick<TurnDiffSummary, "status" | "files"> | undefined;
   isGitRepo: boolean | undefined;
 }): "defer" | "ignore" | "open" {
+  // Outside git a turn is recorded without a snapshot and stays "missing" for
+  // good, so waiting for its diff would never end.
+  if (input.isGitRepo === false) return "ignore";
   if (input.checkpoint === undefined || input.checkpoint.status === "missing") return "defer";
   if (input.isGitRepo === undefined) return "defer";
   if (

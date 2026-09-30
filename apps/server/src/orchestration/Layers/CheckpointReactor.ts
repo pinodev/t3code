@@ -1,6 +1,7 @@
 import {
   CommandId,
   type CheckpointRef,
+  isImportedAgentSessionMessageId,
   EventId,
   MessageId,
   type ProjectId,
@@ -25,6 +26,7 @@ import { parseTurnDiffFilesFromNumstat } from "../../checkpointing/Diffs.ts";
 import {
   checkpointRefForThreadTurn,
   resolveThreadWorkspaceCwd,
+  turnLedgerRefForThreadTurn,
 } from "../../checkpointing/Utils.ts";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
@@ -74,6 +76,46 @@ function checkpointStatusFromRuntime(status: string | undefined): "ready" | "mis
     default:
       return "ready";
   }
+}
+
+// Completed turns that closed before the thread's first ledger entry, oldest
+// first, each with the assistant message that ended it. Imported history is
+// left out: it has no provider turn, and revert and fork always retain it.
+function priorTurnsWithoutLedger(
+  messages: ReadonlyArray<{
+    readonly id: MessageId;
+    readonly role: string;
+    readonly turnId: TurnId | null;
+    readonly createdAt: string;
+  }>,
+  currentTurnId: TurnId,
+): ReadonlyArray<{ turnId: TurnId; assistantMessageId: MessageId; completedAt: string }> {
+  const byTurnId = new Map<
+    TurnId,
+    { turnId: TurnId; assistantMessageId: MessageId; completedAt: string }
+  >();
+  for (const message of messages) {
+    if (
+      message.role !== "assistant" ||
+      message.turnId === null ||
+      message.turnId === currentTurnId ||
+      isImportedAgentSessionMessageId(message.id)
+    ) {
+      continue;
+    }
+    const known = byTurnId.get(message.turnId);
+    if (known) {
+      known.assistantMessageId = message.id;
+      known.completedAt = message.createdAt;
+    } else {
+      byTurnId.set(message.turnId, {
+        turnId: message.turnId,
+        assistantMessageId: message.id,
+        completedAt: message.createdAt,
+      });
+    }
+  }
+  return [...byTurnId.values()];
 }
 
 const make = Effect.gen(function* () {
@@ -389,6 +431,76 @@ const make = Effect.gen(function* () {
     });
   });
 
+  // The turn ledger counts turns for rewind and fork, and it must not depend on
+  // git: a workspace without a repository still records each completed turn,
+  // only without a filesystem snapshot (status "missing", no files, a ref that
+  // never resolves). The first entry of such a thread also records the turns
+  // that closed before it, so counts line up with the conversation.
+  const recordTurnWithoutSnapshot = Effect.fn("recordTurnWithoutSnapshot")(function* (input: {
+    readonly thread: {
+      readonly id: ThreadId;
+      readonly checkpoints: ReadonlyArray<{
+        readonly turnId: TurnId;
+        readonly checkpointTurnCount: number;
+      }>;
+      readonly messages: ReadonlyArray<{
+        readonly id: MessageId;
+        readonly role: string;
+        readonly turnId: TurnId | null;
+        readonly createdAt: string;
+      }>;
+    };
+    readonly turnId: TurnId;
+    readonly createdAt: string;
+  }) {
+    const { thread } = input;
+    if (thread.checkpoints.some((checkpoint) => checkpoint.turnId === input.turnId)) {
+      return;
+    }
+    const record = Effect.fn("recordTurnLedgerEntry")(function* (entry: {
+      readonly turnId: TurnId;
+      readonly turnCount: number;
+      readonly assistantMessageId: MessageId;
+      readonly completedAt: string;
+    }) {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: yield* serverCommandId("turn-ledger-record"),
+        threadId: thread.id,
+        turnId: entry.turnId,
+        completedAt: entry.completedAt,
+        checkpointRef: turnLedgerRefForThreadTurn(thread.id, entry.turnCount),
+        status: "missing",
+        files: [],
+        assistantMessageId: entry.assistantMessageId,
+        checkpointTurnCount: entry.turnCount,
+        createdAt: input.createdAt,
+      });
+    });
+
+    let turnCount = thread.checkpoints.reduce(
+      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
+      0,
+    );
+    if (thread.checkpoints.length === 0) {
+      for (const prior of priorTurnsWithoutLedger(thread.messages, input.turnId)) {
+        turnCount += 1;
+        yield* record({ ...prior, turnCount });
+      }
+    }
+    const assistantMessageId =
+      thread.messages
+        .toReversed()
+        .find((entry) => entry.role === "assistant" && entry.turnId === input.turnId)?.id ??
+      MessageId.make(`assistant:${input.turnId}`);
+    yield* record({
+      turnId: input.turnId,
+      turnCount: turnCount + 1,
+      assistantMessageId,
+      completedAt: input.createdAt,
+    });
+  });
+
   // Capture the files left by a completed or interrupted turn.
   const captureCheckpointFromTurnCompletion = Effect.fn("captureCheckpointFromTurnCompletion")(
     function* (event: Extract<ProviderRuntimeEvent, { type: "turn.completed" | "turn.aborted" }>) {
@@ -426,6 +538,7 @@ const make = Effect.gen(function* () {
         preferSessionRuntime: true,
       });
       if (!checkpointCwd) {
+        yield* recordTurnWithoutSnapshot({ thread, turnId, createdAt: event.createdAt });
         return;
       }
 
@@ -878,8 +991,8 @@ const make = Effect.gen(function* () {
       (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
       0,
     );
-    // Turns are counted with checkpoints, so a thread outside a git workspace has
-    // none and cannot be forked — the same rule rewind follows.
+    // Turns are counted by the turn ledger, which also covers workspaces that
+    // are not git repositories (entries without a snapshot).
     if (turnCount > currentTurnCount) {
       yield* failed(`Fork turn count ${turnCount} exceeds current turn count ${currentTurnCount}.`);
       return;
