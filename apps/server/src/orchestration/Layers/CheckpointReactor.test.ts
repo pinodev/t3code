@@ -1853,6 +1853,52 @@ describe("CheckpointReactor", () => {
     }
   });
 
+  it("thread.fork keeps a local thread local", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: true });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const forkThreadId = ThreadId.make("thread-1-fork-local");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-mark-local"),
+        threadId,
+        isLocal: true,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-diff-local-1"),
+        threadId,
+        turnId: asTurnId("turn-1"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt,
+      }),
+    );
+    await waitForThread(harness.readModel, (thread) => thread.checkpoints.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-thread-fork-local"),
+        threadId,
+        forkThreadId,
+        turnCount: 1,
+        createdAt,
+      }),
+    );
+    await harness.drain();
+
+    const fork = (await harness.readModel()).threads.find((entry) => entry.id === forkThreadId);
+    expect(fork?.isLocal).toBe(true);
+  });
+
   effectIt.effect("counts turns outside a git repository so rewind and fork still work", () =>
     Effect.gen(function* () {
       const harness = yield* Effect.promise(() =>

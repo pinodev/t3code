@@ -1015,6 +1015,8 @@ const make = Effect.gen(function* () {
         interactionMode: thread.interactionMode,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
+        // A fork of a local thread stays local.
+        ...(thread.isLocal ? { isLocal: true } : {}),
         createdAt: now,
         historyImport: true,
       });
