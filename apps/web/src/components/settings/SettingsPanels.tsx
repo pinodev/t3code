@@ -116,6 +116,7 @@ import {
 } from "../ui/dialog";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
 import {
   DEFAULT_CODE_FONT_STACK,
   DEFAULT_SANS_FONT_STACK,
@@ -2141,6 +2142,83 @@ export function GeneralSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <SettingsSection id="visibility" title="Visibility">
+        <SettingsRow
+          {...searchableSetting("global-filter")}
+          description="Filter project names and thread titles with the same set of strings."
+          control={
+            <Switch
+              checked={settings.globalFilterEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ globalFilterEnabled: Boolean(checked) })
+              }
+              aria-label="Enable global filter"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("global-filter-terms")}
+          description="Enter one string per line. An item matches when its name contains any string."
+          control={
+            <Textarea
+              key={settings.globalFilterTerms.join("\n")}
+              className="min-h-20 w-full sm:w-72"
+              aria-label="Global filter strings"
+              defaultValue={settings.globalFilterTerms.join("\n")}
+              placeholder={"(PS26)\n(PS252)"}
+              onBlur={(event) =>
+                updateSettings({
+                  globalFilterTerms: [
+                    ...new Set(
+                      event.currentTarget.value
+                        .split(/\r?\n/)
+                        .map((term) => term.trim())
+                        .filter(Boolean),
+                    ),
+                  ],
+                })
+              }
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("global-filter-case-sensitive")}
+          description="Match uppercase and lowercase exactly."
+          control={
+            <Switch
+              checked={settings.globalFilterCaseSensitive}
+              onCheckedChange={(checked) =>
+                updateSettings({ globalFilterCaseSensitive: Boolean(checked) })
+              }
+              aria-label="Case-sensitive global filter"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("global-filter-inverted")}
+          description="Hide matching names instead of showing only matches."
+          control={
+            <Switch
+              checked={settings.globalFilterInverted}
+              onCheckedChange={(checked) =>
+                updateSettings({ globalFilterInverted: Boolean(checked) })
+              }
+              aria-label="Invert global filter"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("hide-local-items")}
+          description="Hide local projects and threads from lists and searches."
+          control={
+            <Switch
+              checked={settings.hideLocalItems}
+              onCheckedChange={(checked) => updateSettings({ hideLocalItems: Boolean(checked) })}
+              aria-label="Hide local projects and threads"
+            />
+          }
+        />
+      </SettingsSection>
       <ProjectDefaultsSettings category="general" />
       <SettingsSection id="organization" title="Organization">
         {supportsAutoSettlement ? (

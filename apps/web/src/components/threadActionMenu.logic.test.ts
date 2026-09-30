@@ -5,12 +5,19 @@ import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./thread
 const baseState: ThreadActionMenuState = {
   branch: null,
   isPinned: false,
+  isLocal: false,
   isSettled: false,
   isSnoozed: false,
   canSnoozeNow: true,
   isRegeneratingTitle: false,
   isRunning: false,
-  supports: { settlement: true, snooze: true, pinning: true, titleRegeneration: true },
+  supports: {
+    settlement: true,
+    snooze: true,
+    pinning: true,
+    localTags: false,
+    titleRegeneration: true,
+  },
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
   ],
@@ -31,7 +38,13 @@ describe("buildThreadActionMenuItems", () => {
     expect(
       ids({
         ...baseState,
-        supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
+        supports: {
+          settlement: false,
+          snooze: false,
+          pinning: false,
+          localTags: false,
+          titleRegeneration: false,
+        },
       }),
     ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
   });
@@ -60,6 +73,19 @@ describe("buildThreadActionMenuItems", () => {
       expect.arrayContaining(["unpin", "unsettle", "unsnooze"]),
     );
     expect(ids(baseState)).toEqual(expect.arrayContaining(["pin", "settle", "snooze"]));
+  });
+
+  it("offers a reversible local tag when supported", () => {
+    expect(ids({ ...baseState, supports: { ...baseState.supports, localTags: true } })).toContain(
+      "mark-local",
+    );
+    expect(
+      ids({
+        ...baseState,
+        isLocal: true,
+        supports: { ...baseState.supports, localTags: true },
+      }),
+    ).toContain("unmark-local");
   });
 
   it("disables snooze when the thread cannot snooze, keeping presets visible", () => {
@@ -95,7 +121,13 @@ describe("buildThreadActionMenuItems", () => {
     expect(
       ids({
         ...baseState,
-        supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
+        supports: {
+          settlement: false,
+          snooze: false,
+          pinning: false,
+          localTags: false,
+          titleRegeneration: false,
+        },
       }),
     ).toContain("archive");
   });

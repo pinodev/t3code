@@ -289,6 +289,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       yield* projects.upsert({
         projectId: ProjectId.make("project-null-options"),
         title: "Null options project",
+        isLocal: true,
         workspaceRoot: "/tmp/project-null-options",
         defaultModelSelection: {
           instanceId: ProviderInstanceId.make("codex"),
@@ -330,6 +331,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.4",
       });
+      assert.strictEqual(Option.getOrNull(persisted)?.isLocal, true);
     }),
   );
 
@@ -342,6 +344,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         threadId: ThreadId.make("thread-null-options"),
         projectId: ProjectId.make("project-null-options"),
         title: "Null options thread",
+        isLocal: true,
         modelSelection: {
           instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-opus-4-6",
@@ -395,6 +398,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-opus-4-6",
       });
+      assert.strictEqual(Option.getOrNull(persisted)?.isLocal, true);
     }),
   );
 
@@ -406,6 +410,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         threadId: ThreadId.make("thread-settled"),
         projectId: ProjectId.make("project-1"),
         title: "Settled thread",
+        isLocal: false,
         modelSelection: {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5.4",
@@ -487,6 +492,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         threadId: ThreadId.make("thread-linked-pr"),
         projectId: ProjectId.make("project-linked-pr"),
         title: "Linked pull request",
+        isLocal: false,
         modelSelection: {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5.4",

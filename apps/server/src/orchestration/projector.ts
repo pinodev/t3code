@@ -345,6 +345,7 @@ export function projectEvent(
             autoPull: false,
             faviconPath: payload.faviconPath ?? null,
             projectIcon: payload.projectIcon ?? null,
+            isLocal: payload.isLocal ?? false,
             scripts: payload.scripts,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -387,6 +388,7 @@ export function projectEvent(
                   ...(payload.projectIcon !== undefined
                     ? { projectIcon: payload.projectIcon }
                     : {}),
+                  ...(payload.isLocal !== undefined ? { isLocal: payload.isLocal } : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
                   updatedAt: payload.updatedAt,
                 }
@@ -430,6 +432,7 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            isLocal: payload.isLocal ?? false,
             pullRequests: [],
             branchPullRequest: null,
             latestTurn: null,
@@ -629,6 +632,7 @@ export function projectEvent(
               ...(payload.branchPullRequest !== undefined
                 ? { branchPullRequest: payload.branchPullRequest }
                 : {}),
+              ...(payload.isLocal !== undefined ? { isLocal: payload.isLocal } : {}),
               ...legacyLinkPatch,
               updatedAt: payload.updatedAt,
             }),

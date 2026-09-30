@@ -2,6 +2,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 
@@ -22,6 +23,7 @@ const ProjectionThreadDbRow = ProjectionThread.mapFields(
     titleState: Schema.NullOr(Schema.fromJsonString(ThreadTitleState)),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
     branchPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
+    isLocal: Schema.Number,
   }),
 );
 type ProjectionThreadDbRow = typeof ProjectionThreadDbRow.Type;
@@ -56,6 +58,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           snoozed_at,
           pinned_at,
           pin_order_key,
+          is_local,
           active_order_key,
           title_regeneration_request_id,
           title_regeneration_started_at,
@@ -88,6 +91,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.snoozedAt},
           ${row.pinnedAt},
           ${row.pinOrderKey ?? null},
+          ${row.isLocal ? 1 : 0},
           ${row.activeOrderKey ?? null},
           ${row.titleRegenerationRequestId ?? null},
           ${row.titleRegenerationStartedAt ?? null},
@@ -120,6 +124,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           snoozed_at = excluded.snoozed_at,
           pinned_at = excluded.pinned_at,
           pin_order_key = excluded.pin_order_key,
+          is_local = excluded.is_local,
           active_order_key = excluded.active_order_key,
           title_regeneration_request_id = excluded.title_regeneration_request_id,
           title_regeneration_started_at = excluded.title_regeneration_started_at,
@@ -159,6 +164,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           snoozed_at AS "snoozedAt",
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
+          is_local AS "isLocal",
           active_order_key AS "activeOrderKey",
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
@@ -200,6 +206,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           snoozed_at AS "snoozedAt",
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
+          is_local AS "isLocal",
           active_order_key AS "activeOrderKey",
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
@@ -230,11 +237,13 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
 
   const getById: ProjectionThreadRepositoryShape["getById"] = (input) =>
     getProjectionThreadRow(input).pipe(
+      Effect.map(Option.map((row) => ({ ...row, isLocal: row.isLocal === 1 }))),
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.getById:query")),
     );
 
   const listByProjectId: ProjectionThreadRepositoryShape["listByProjectId"] = (input) =>
     listProjectionThreadRows(input).pipe(
+      Effect.map((rows) => rows.map((row) => ({ ...row, isLocal: row.isLocal === 1 }))),
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.listByProjectId:query")),
     );
 

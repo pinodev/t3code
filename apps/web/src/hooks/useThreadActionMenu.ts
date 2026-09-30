@@ -22,6 +22,7 @@ import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   readEnvironmentSupportsPinning,
+  readEnvironmentSupportsLocalTags,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
@@ -118,6 +119,7 @@ export function useThreadActionMenu(input: {
           settlement: readEnvironmentSupportsSettlement(threadRef.environmentId),
           snooze: readEnvironmentSupportsSnooze(threadRef.environmentId),
           pinning: readEnvironmentSupportsPinning(threadRef.environmentId),
+          localTags: readEnvironmentSupportsLocalTags(threadRef.environmentId),
           titleRegeneration: readEnvironmentSupportsTitleRegeneration(threadRef.environmentId),
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
@@ -125,6 +127,7 @@ export function useThreadActionMenu(input: {
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
           isPinned: thread.pinnedAt != null,
+          isLocal: thread.isLocal === true,
           isSettled: supports.settlement && thread.settledOverride === "settled",
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
@@ -224,6 +227,15 @@ export function useThreadActionMenu(input: {
             await reportFailure("Failed to unpin thread", () => confirmAndUnpinThread(threadRef));
             return;
           }
+          case "mark-local":
+          case "unmark-local":
+            await reportFailure("Failed to update local tag", () =>
+              updateThreadMetadata({
+                environmentId: threadRef.environmentId,
+                input: { threadId: threadRef.threadId, isLocal: action === "mark-local" },
+              }),
+            );
+            return;
           case "rename":
             onStartRename();
             return;

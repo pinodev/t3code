@@ -211,6 +211,13 @@ export function readEnvironmentSupportsPinning(environmentId: EnvironmentId): bo
   );
 }
 
+export function readEnvironmentSupportsLocalTags(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .localTags === true
+  );
+}
+
 /** Whether the environment's server understands thread title regeneration.
     Same version-skew contract as settlement. */
 export function readEnvironmentSupportsTitleRegeneration(environmentId: EnvironmentId): boolean {
