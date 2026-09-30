@@ -1877,9 +1877,12 @@ describe("CheckpointReactor", () => {
         yield* Effect.promise(harness.drain);
       }
 
-      const thread = yield* Effect.promise(() =>
+      yield* Effect.promise(() =>
         waitForThread(harness.readModel, (entry) => entry.checkpoints.length === 2),
       );
+      const thread = (yield* Effect.promise(harness.readModel)).threads.find(
+        (entry) => entry.id === threadId,
+      )!;
       expect(
         thread.checkpoints
           .map(({ turnId, checkpointTurnCount, checkpointRef, status, files }) => ({
@@ -1963,9 +1966,12 @@ describe("CheckpointReactor", () => {
         yield* Effect.promise(harness.drain);
       }
 
-      const thread = yield* Effect.promise(() =>
+      yield* Effect.promise(() =>
         waitForThread(harness.readModel, (entry) => entry.checkpoints.length === 3),
       );
+      const thread = (yield* Effect.promise(harness.readModel)).threads.find(
+        (entry) => entry.id === threadId,
+      )!;
       expect(
         thread.checkpoints
           .map(({ turnId, checkpointTurnCount, assistantMessageId }) => ({
