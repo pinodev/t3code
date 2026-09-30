@@ -20,6 +20,7 @@ const ProjectionProjectDbRow = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     autoPull: Schema.Number,
+    isLocal: Schema.Number,
     projectIcon: Schema.NullOr(Schema.fromJsonString(ProjectIconOverride)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
   }),
@@ -42,6 +43,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           auto_pull,
           favicon_path,
           project_icon_json,
+          is_local,
           scripts_json,
           created_at,
           updated_at,
@@ -56,6 +58,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           ${row.autoPull ? 1 : 0},
           ${row.faviconPath ?? null},
           ${row.projectIcon ? JSON.stringify(row.projectIcon) : null},
+          ${row.isLocal ? 1 : 0},
           ${JSON.stringify(row.scripts)},
           ${row.createdAt},
           ${row.updatedAt},
@@ -70,6 +73,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           auto_pull = excluded.auto_pull,
           favicon_path = excluded.favicon_path,
           project_icon_json = excluded.project_icon_json,
+          is_local = excluded.is_local,
           scripts_json = excluded.scripts_json,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
@@ -91,6 +95,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           auto_pull AS "autoPull",
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
+          is_local AS "isLocal",
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -114,6 +119,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           auto_pull AS "autoPull",
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
+          is_local AS "isLocal",
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -139,13 +145,17 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
 
   const getById: ProjectionProjectRepositoryShape["getById"] = (input) =>
     getProjectionProjectRow(input).pipe(
-      Effect.map(Option.map((row) => ({ ...row, autoPull: row.autoPull === 1 }))),
+      Effect.map(
+        Option.map((row) => ({ ...row, autoPull: row.autoPull === 1, isLocal: row.isLocal === 1 })),
+      ),
       Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.getById:query")),
     );
 
   const listAll: ProjectionProjectRepositoryShape["listAll"] = () =>
     listProjectionProjectRows().pipe(
-      Effect.map((rows) => rows.map((row) => ({ ...row, autoPull: row.autoPull === 1 }))),
+      Effect.map((rows) =>
+        rows.map((row) => ({ ...row, autoPull: row.autoPull === 1, isLocal: row.isLocal === 1 })),
+      ),
       Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.listAll:query")),
     );
 

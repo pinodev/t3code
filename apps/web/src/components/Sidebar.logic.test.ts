@@ -21,6 +21,8 @@ import {
   isContextMenuPointerDown,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
+  isVisibleByGlobalFilter,
+  normalizeGlobalFilterTerms,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
   resolveThreadRowClassName,
@@ -813,6 +815,32 @@ describe("resolveSidebarThreadStatus", () => {
 
   it("defaults to ready with no session", () => {
     expect(resolveSidebarThreadStatus({ ...idle, session: null })).toBe("ready");
+  });
+});
+
+describe("global visibility filter", () => {
+  const base = {
+    enabled: true,
+    terms: ["(PS26)", " (PS252) ", ""],
+    caseSensitive: false,
+    inverted: false,
+  } as const;
+
+  it("normalizes duplicate and blank terms", () => {
+    expect(normalizeGlobalFilterTerms([" PS26 ", "", "PS26", "PS252"])).toEqual(["PS26", "PS252"]);
+  });
+
+  it("matches any configured term with optional casing", () => {
+    expect(isVisibleByGlobalFilter("Build (ps26)", base)).toBe(true);
+    expect(isVisibleByGlobalFilter("Build (ps26)", { ...base, caseSensitive: true })).toBe(false);
+    expect(isVisibleByGlobalFilter("Unrelated", base)).toBe(false);
+  });
+
+  it("inverts matches and treats disabled or empty filters as pass-through", () => {
+    expect(isVisibleByGlobalFilter("Build (PS26)", { ...base, inverted: true })).toBe(false);
+    expect(isVisibleByGlobalFilter("Unrelated", { ...base, inverted: true })).toBe(true);
+    expect(isVisibleByGlobalFilter("Unrelated", { ...base, enabled: false })).toBe(true);
+    expect(isVisibleByGlobalFilter("Unrelated", { ...base, terms: [] })).toBe(true);
   });
 });
 

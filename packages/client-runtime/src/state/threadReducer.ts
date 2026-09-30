@@ -122,6 +122,7 @@ export function applyThreadDetailEvent(
           interactionMode: event.payload.interactionMode,
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
+          isLocal: event.payload.isLocal ?? false,
           branchPullRequest: null,
           latestTurn: null,
           createdAt: event.payload.createdAt,
@@ -278,6 +279,7 @@ export function applyThreadDetailEvent(
           ...(event.payload.activeOrderKey !== undefined
             ? { activeOrderKey: event.payload.activeOrderKey }
             : {}),
+          ...(event.payload.isLocal !== undefined ? { isLocal: event.payload.isLocal } : {}),
           updatedAt: event.payload.updatedAt,
         },
       };

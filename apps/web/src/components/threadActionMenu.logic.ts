@@ -11,6 +11,8 @@ export type ThreadActionMenuId =
   | "project-settings"
   | "pin"
   | "unpin"
+  | "mark-local"
+  | "unmark-local"
   | "settle"
   | "unsettle"
   | "snooze"
@@ -29,6 +31,7 @@ export type ThreadActionMenuId =
 export interface ThreadActionMenuState {
   readonly branch: string | null;
   readonly isPinned: boolean;
+  readonly isLocal: boolean;
   readonly isSettled: boolean;
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
@@ -39,6 +42,7 @@ export interface ThreadActionMenuState {
     readonly settlement: boolean;
     readonly snooze: boolean;
     readonly pinning: boolean;
+    readonly localTags: boolean;
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
@@ -67,6 +71,13 @@ export function buildThreadActionMenuItems(
           state.isPinned
             ? { id: "unpin" as const, label: "Unpin thread", icon: "pin-off" }
             : { id: "pin" as const, label: "Pin thread", icon: "pin" },
+        ]
+      : []),
+    ...(state.supports.localTags
+      ? [
+          state.isLocal
+            ? { id: "unmark-local" as const, label: "Remove local tag" }
+            : { id: "mark-local" as const, label: "Mark as local" },
         ]
       : []),
     // Both lifecycle actions stay available on pinned threads: settling

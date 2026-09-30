@@ -27,6 +27,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   SettingResetButton,
@@ -209,6 +210,7 @@ function ProjectDetail({
         title: string;
         faviconPath: string | null;
         projectIcon: ProjectIconOverride | null;
+        isLocal: boolean;
       }>,
       failureTitle: string,
     ): Promise<AtomCommandResult<void, unknown>> => {
@@ -291,6 +293,12 @@ function ProjectDetail({
   );
 
   const hasMultipleCheckouts = group.memberProjects.length > 1;
+  const supportsLocalTags = group.memberProjects.every(
+    (member) =>
+      environmentById.get(member.environmentId)?.serverConfig?.environment.capabilities
+        .localTags === true,
+  );
+  const isLocal = group.memberProjects.every((member) => member.isLocal === true);
 
   const removeMembers = useCallback(
     async (members: ReadonlyArray<SidebarProjectGroupMember>) => {
@@ -477,6 +485,24 @@ function ProjectDetail({
               </div>
             }
           />
+          {supportsLocalTags ? (
+            <SettingsRow
+              title="Local"
+              description="Marks this project and all of its threads as local."
+              control={
+                <Switch
+                  checked={isLocal}
+                  onCheckedChange={(checked) =>
+                    void updateAllMembers(
+                      { isLocal: Boolean(checked) },
+                      "Failed to update local tag",
+                    )
+                  }
+                  aria-label="Local project"
+                />
+              }
+            />
+          ) : null}
         </SettingsSection>
         <ProjectActionsSettings />
         {hasMultipleCheckouts ? checkoutChoices : null}

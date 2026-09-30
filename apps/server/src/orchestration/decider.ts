@@ -251,6 +251,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           defaultModelSelection: null,
           faviconPath: null,
           projectIcon: null,
+          isLocal: false,
           scripts: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
@@ -307,6 +308,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.autoPull !== undefined ? { autoPull: command.autoPull } : {}),
           ...(command.faviconPath !== undefined ? { faviconPath: command.faviconPath } : {}),
           ...(command.projectIcon !== undefined ? { projectIcon: command.projectIcon } : {}),
+          ...(command.isLocal !== undefined ? { isLocal: command.isLocal } : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
           updatedAt: occurredAt,
         },
@@ -393,6 +395,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          isLocal: command.isLocal ?? false,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -1018,6 +1021,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.linkedPullRequest !== undefined
             ? { linkedPullRequest: command.linkedPullRequest }
             : {}),
+          ...(command.isLocal !== undefined ? { isLocal: command.isLocal } : {}),
           updatedAt: occurredAt,
         },
       };

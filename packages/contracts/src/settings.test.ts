@@ -507,6 +507,35 @@ describe("ClientSettings sidebar", () => {
   });
 });
 
+describe("ClientSettings visibility filters", () => {
+  it("defaults both filters to disabled", () => {
+    const settings = decodeClientSettings({});
+    expect(settings.globalFilterEnabled).toBe(false);
+    expect(settings.globalFilterTerms).toEqual([]);
+    expect(settings.globalFilterCaseSensitive).toBe(false);
+    expect(settings.globalFilterInverted).toBe(false);
+    expect(settings.hideLocalItems).toBe(false);
+  });
+
+  it("round-trips visibility filter patches", () => {
+    expect(
+      decodeClientSettingsPatch({
+        globalFilterEnabled: true,
+        globalFilterTerms: ["(PS26)", "(PS252)"],
+        globalFilterCaseSensitive: true,
+        globalFilterInverted: true,
+        hideLocalItems: true,
+      }),
+    ).toEqual({
+      globalFilterEnabled: true,
+      globalFilterTerms: ["(PS26)", "(PS252)"],
+      globalFilterCaseSensitive: true,
+      globalFilterInverted: true,
+      hideLocalItems: true,
+    });
+  });
+});
+
 describe("ClientSettings context window meter", () => {
   it("defaults off and preserves an explicit legacy opt-in", () => {
     expect(decodeClientSettings({}).contextWindowMeterEnabled).toBe(false);

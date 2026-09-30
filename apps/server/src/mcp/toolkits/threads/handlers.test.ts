@@ -176,6 +176,20 @@ describe("threads toolkit handlers", () => {
     }),
   );
 
+  it.effect("inherits the caller's local tag", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        threads: [makeThread({ isLocal: true }), makeThread({ id: OTHER_THREAD_ID })],
+      });
+      yield* harness.call({ prompt: "Keep this work local" });
+
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.create", isLocal: true },
+        { type: "thread.turn.start" },
+      ]);
+    }),
+  );
+
   it.effect("applies model and mode overrides but keeps the caller's provider", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

@@ -510,6 +510,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             autoPull: false,
             faviconPath: event.payload.faviconPath ?? null,
             projectIcon: event.payload.projectIcon ?? null,
+            isLocal: event.payload.isLocal ?? false,
             scripts: event.payload.scripts,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -543,6 +544,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.projectIcon !== undefined
               ? { projectIcon: event.payload.projectIcon }
               : {}),
+            ...(event.payload.isLocal !== undefined ? { isLocal: event.payload.isLocal } : {}),
             ...(event.payload.scripts !== undefined ? { scripts: event.payload.scripts } : {}),
             updatedAt: event.payload.updatedAt,
           });
@@ -632,6 +634,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             snoozedAt: null,
             pinnedAt: null,
             pinOrderKey: null,
+            isLocal: event.payload.isLocal ?? false,
             activeOrderKey: null,
             titleRegenerationRequestId: null,
             titleRegenerationStartedAt: null,
@@ -810,6 +813,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.activeOrderKey !== undefined
               ? { activeOrderKey: event.payload.activeOrderKey }
               : {}),
+            ...(event.payload.isLocal !== undefined ? { isLocal: event.payload.isLocal } : {}),
             ...(event.payload.titleState !== undefined
               ? { titleState: event.payload.titleState }
               : {}),

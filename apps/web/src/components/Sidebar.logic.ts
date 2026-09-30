@@ -947,6 +947,28 @@ export function searchSidebarThreads<
   );
 }
 
+export interface GlobalVisibilityFilter {
+  readonly enabled: boolean;
+  readonly terms: readonly string[];
+  readonly caseSensitive: boolean;
+  readonly inverted: boolean;
+}
+
+export function normalizeGlobalFilterTerms(terms: readonly string[]): string[] {
+  return [...new Set(terms.map((term) => term.trim()).filter((term) => term.length > 0))];
+}
+
+export function isVisibleByGlobalFilter(value: string, filter: GlobalVisibilityFilter): boolean {
+  if (!filter.enabled) return true;
+  const terms = normalizeGlobalFilterTerms(filter.terms);
+  if (terms.length === 0) return true;
+  const candidate = filter.caseSensitive ? value : value.toLocaleLowerCase();
+  const matches = terms.some((term) =>
+    candidate.includes(filter.caseSensitive ? term : term.toLocaleLowerCase()),
+  );
+  return filter.inverted ? !matches : matches;
+}
+
 export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {
   items: readonly TItem[];
   query: string;

@@ -31,7 +31,13 @@ function inheritedThreadSettings(
   input: StartThreadInput,
 ): Pick<
   OrchestrationThreadShell,
-  "projectId" | "modelSelection" | "runtimeMode" | "interactionMode" | "branch" | "worktreePath"
+  | "projectId"
+  | "modelSelection"
+  | "runtimeMode"
+  | "interactionMode"
+  | "branch"
+  | "worktreePath"
+  | "isLocal"
 > {
   return {
     projectId: parent.projectId,
@@ -43,6 +49,7 @@ function inheritedThreadSettings(
     interactionMode: input.interactionMode ?? parent.interactionMode,
     branch: parent.branch,
     worktreePath: parent.worktreePath,
+    isLocal: parent.isLocal,
   };
 }
 

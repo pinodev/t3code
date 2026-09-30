@@ -156,6 +156,7 @@ import {
   formatWorkingDurationLabel,
   firstValidTimestampMs,
   hasUnseenCompletion,
+  isVisibleByGlobalFilter,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -2148,6 +2149,11 @@ export default function Sidebar() {
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
+  const globalFilterEnabled = useClientSettings((s) => s.globalFilterEnabled);
+  const globalFilterTerms = useClientSettings((s) => s.globalFilterTerms);
+  const globalFilterCaseSensitive = useClientSettings((s) => s.globalFilterCaseSensitive);
+  const globalFilterInverted = useClientSettings((s) => s.globalFilterInverted);
+  const hideLocalItems = useClientSettings((s) => s.hideLocalItems);
   const {
     settleThread,
     unsettleThread,
@@ -2278,10 +2284,42 @@ export default function Sidebar() {
       ),
     [environments],
   );
+  const globalVisibilityFilter = useMemo(
+    () => ({
+      enabled: globalFilterEnabled,
+      terms: globalFilterTerms,
+      caseSensitive: globalFilterCaseSensitive,
+      inverted: globalFilterInverted,
+    }),
+    [globalFilterCaseSensitive, globalFilterEnabled, globalFilterInverted, globalFilterTerms],
+  );
+  const visibleProjects = useMemo(
+    () =>
+      projects.filter(
+        (project) =>
+          (!hideLocalItems || project.isLocal !== true) &&
+          isVisibleByGlobalFilter(project.title, globalVisibilityFilter),
+      ),
+    [globalVisibilityFilter, hideLocalItems, projects],
+  );
+  const visibleProjectKeys = useMemo(
+    () => new Set(visibleProjects.map((project) => `${project.environmentId}:${project.id}`)),
+    [visibleProjects],
+  );
+  const visibleThreads = useMemo(
+    () =>
+      threads.filter((thread) => {
+        const projectKey = `${thread.environmentId}:${thread.projectId}`;
+        if (!visibleProjectKeys.has(projectKey)) return false;
+        if (hideLocalItems && thread.isLocal === true) return false;
+        return isVisibleByGlobalFilter(thread.title, globalVisibilityFilter);
+      }),
+    [globalVisibilityFilter, hideLocalItems, threads, visibleProjectKeys],
+  );
   const orderedProjects = useMemo(
     () =>
       orderItemsByPreferredIds({
-        items: projects,
+        items: visibleProjects,
         preferredIds: projectOrder,
         getId: getProjectOrderKey,
         getPreferenceIds: (project) => [
@@ -2289,12 +2327,12 @@ export default function Sidebar() {
           legacyProjectCwdPreferenceKey(project.workspaceRoot),
         ],
       }),
-    [projectOrder, projects],
+    [projectOrder, visibleProjects],
   );
   const unsortedProjectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
-        projects: sidebarProjectSortOrder === "manual" ? orderedProjects : projects,
+        projects: sidebarProjectSortOrder === "manual" ? orderedProjects : visibleProjects,
         primaryEnvironmentId,
         resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
       }),
@@ -2302,13 +2340,14 @@ export default function Sidebar() {
       environmentLabelById,
       orderedProjects,
       primaryEnvironmentId,
-      projects,
+      visibleProjects,
       sidebarProjectSortOrder,
     ],
   );
   const projectGroups = useMemo(
-    () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
-    [sidebarProjectSortOrder, threads, unsortedProjectGroups],
+    () =>
+      sortLogicalProjectsForSidebar(unsortedProjectGroups, visibleThreads, sidebarProjectSortOrder),
+    [sidebarProjectSortOrder, unsortedProjectGroups, visibleThreads],
   );
   const projectGroupsRef = useRef(projectGroups);
   projectGroupsRef.current = projectGroups;
@@ -2524,7 +2563,7 @@ export default function Sidebar() {
     // memo exactly at the next wake boundary.
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
-    const visible = threads.filter(
+    const visible = visibleThreads.filter(
       (thread) =>
         thread.archivedAt === null &&
         (scopedProjectKeys === null ||
@@ -2607,7 +2646,7 @@ export default function Sidebar() {
       settledThreads: sortSettledThreadsForSidebar(settled),
       snoozeNow: preciseNow,
     };
-  }, [nowMinute, optimisticDrop, scopedProjectKeys, serverConfigs, snoozeWakeTick, threads]);
+  }, [nowMinute, optimisticDrop, scopedProjectKeys, serverConfigs, snoozeWakeTick, visibleThreads]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -4030,6 +4069,8 @@ export default function Sidebar() {
         const supportsTitleRegeneration =
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadTitleRegeneration === true;
+        const supportsLocalTags =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.localTags === true;
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
@@ -4041,6 +4082,7 @@ export default function Sidebar() {
             buildThreadActionMenuItems({
               branch: thread.branch ?? null,
               isPinned,
+              isLocal: thread.isLocal === true,
               isSettled,
               isSnoozed,
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
@@ -4051,6 +4093,7 @@ export default function Sidebar() {
                 settlement: supportsSettlement,
                 snooze: supportsSnooze,
                 pinning: supportsPinning,
+                localTags: supportsLocalTags,
                 titleRegeneration: supportsTitleRegeneration,
               },
               snoozePresets,
@@ -4117,6 +4160,24 @@ export default function Sidebar() {
           case "unpin":
             attemptUnpin(threadRef);
             return;
+          case "mark-local":
+          case "unmark-local": {
+            const result = await updateThreadMetadata({
+              environmentId: threadRef.environmentId,
+              input: { threadId: threadRef.threadId, isLocal: clicked.value === "mark-local" },
+            });
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Failed to update local tag",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            }
+            return;
+          }
           case "rename":
             startThreadRename(threadRef, thread.title);
             return;
