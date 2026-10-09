@@ -749,6 +749,29 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
     });
 
+  const seedTempIndexFromWorktreeIndex = (cwd: string, tempIndexPath: string) =>
+    Effect.gen(function* () {
+      const result = yield* execute({
+        operation: "GitVcsDriver.checkpoints.resolveWorktreeIndex",
+        cwd,
+        args: ["rev-parse", "--show-prefix", "--git-path", "index"],
+        allowNonZeroExit: true,
+      });
+      if (result.exitCode !== 0) {
+        return false;
+      }
+      const [prefix = "", indexPath = ""] = result.stdout.split(/\r?\n/);
+      if (prefix.trim().length > 0 || indexPath.trim().length === 0) {
+        return false;
+      }
+      const resolvedIndexPath = path.resolve(cwd, indexPath.trim());
+      if (!(yield* fileSystem.exists(resolvedIndexPath))) {
+        return false;
+      }
+      yield* fileSystem.copyFile(resolvedIndexPath, tempIndexPath);
+      return true;
+    }).pipe(Effect.orElseSucceed(() => false));
+
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.captureCheckpoint";
@@ -771,7 +794,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         .pipe(Effect.ignore);
 
       yield* Effect.gen(function* () {
-        const headExists = yield* hasHeadCommit(input.cwd);
+        // A temp index built by `read-tree HEAD` has no stat data, so `add -A` re-hashes every
+        // tracked file; on large repos that alone outlasts the process timeout. At the worktree
+        // root, start from a copy of the real index instead: `add -A -- .` still records the
+        // whole worktree, but only re-reads files whose stat data changed. Below the root, paths
+        // outside cwd must keep HEAD's content, so the copy (which carries staged work) is skipped.
+        const seededFromIndex = yield* seedTempIndexFromWorktreeIndex(input.cwd, tempIndexPath);
+        const headExists = seededFromIndex ? false : yield* hasHeadCommit(input.cwd);
         if (headExists) {
           yield* execute({
             operation,

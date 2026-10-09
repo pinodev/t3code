@@ -129,6 +129,53 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
+it.effect("captures the worktree, not staged content, when seeding from the real index", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-seeded-checkpoint-" });
+    yield* runGit(cwd, ["init"]);
+    yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
+    yield* runGit(cwd, ["config", "user.name", "Test"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "edited.txt"), "head\n");
+    yield* fileSystem.writeFileString(path.join(cwd, "deleted.txt"), "head\n");
+    yield* runGit(cwd, ["add", "."]);
+    yield* runGit(cwd, ["commit", "-m", "initial"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "edited.txt"), "staged\n");
+    yield* runGit(cwd, ["add", "edited.txt"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "edited.txt"), "worktree\n");
+    yield* fileSystem.remove(path.join(cwd, "deleted.txt"));
+    yield* fileSystem.writeFileString(path.join(cwd, "untracked.txt"), "new\n");
+
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/seeded");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    const files = yield* driver.execute({
+      operation: "test",
+      cwd,
+      args: ["ls-tree", "--name-only", checkpointRef],
+    });
+    assert.deepStrictEqual(files.stdout.trim().split("\n"), ["edited.txt", "untracked.txt"]);
+    const edited = yield* driver.execute({
+      operation: "test",
+      cwd,
+      args: ["show", `${checkpointRef}:edited.txt`],
+    });
+    assert.strictEqual(edited.stdout, "worktree\n");
+    const staged = yield* driver.execute({
+      operation: "test",
+      cwd,
+      args: ["diff", "--cached", "--name-only"],
+    });
+    assert.strictEqual(staged.stdout.trim(), "edited.txt");
+    const leftovers = (yield* fileSystem.readDirectory(path.join(cwd, ".git"))).filter((name) =>
+      name.startsWith("t3-checkpoint-index-"),
+    );
+    assert.deepStrictEqual(leftovers, []);
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
 it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
   let observedEnv: NodeJS.ProcessEnv | undefined;
   let observedAppendTruncationMarker: boolean | undefined;
