@@ -42,9 +42,11 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
 import {
+  type AutoSettleUnit,
   DEFAULT_SERVER_SETTINGS,
-  MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
-  MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  formatAutoSettleAfterDays,
+  joinAutoSettleAfterDays,
+  splitAutoSettleAfterDays,
 } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import {
@@ -606,6 +608,11 @@ function GeneralSettingsSection() {
 }
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
+const NEXT_AUTO_SETTLE_UNIT: Record<AutoSettleUnit, AutoSettleUnit> = {
+  minutes: "hours",
+  hours: "days",
+  days: "minutes",
+};
 
 /**
  * Mobile edits auto-settle defaults across connected, capable environments.
@@ -623,7 +630,9 @@ function AutoSettleSettingsRows() {
   const reference = syncTargets[0] ?? null;
   const referenceSettings = reference?.serverConfig?.settings ?? null;
 
-  const [daysDraft, setDaysDraft] = useState<string | null>(null);
+  const [amountDraft, setAmountDraft] = useState<string | null>(null);
+  // Local so "24 hours" stays in hours instead of turning into "1 day".
+  const [preferredUnit, setPreferredUnit] = useState<AutoSettleUnit | undefined>(undefined);
 
   if (reference === null || referenceSettings === null) {
     return null;
@@ -645,20 +654,29 @@ function AutoSettleSettingsRows() {
   );
 
   const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
-  const commitDays = () => {
-    const draft = (daysDraft ?? "").trim();
-    setDaysDraft(null);
+  const after = afterDays === null ? null : splitAutoSettleAfterDays(afterDays, preferredUnit);
+  const commitAmount = () => {
+    const draft = (amountDraft ?? "").trim();
+    setAmountDraft(null);
+    if (after === null) return;
     // Whole-string check so "3.5" and "3days" are rejected instead of
     // silently becoming 3 on every eligible sync target.
-    const parsed = /^\d+$/.test(draft) ? Number(draft) : Number.NaN;
-    if (
-      Number.isInteger(parsed) &&
-      parsed >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
-      parsed <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
-      parsed !== afterDays
-    ) {
-      writeToAll({ sidebarAutoSettleAfterDays: parsed });
+    const days = /^\d+$/.test(draft) ? joinAutoSettleAfterDays(Number(draft), after.unit) : null;
+    if (days !== null && days !== afterDays) {
+      writeToAll({ sidebarAutoSettleAfterDays: days });
     }
+  };
+  // Keeps the amount and changes its unit; skips a unit where it is out of range.
+  const cycleUnit = () => {
+    if (after === null) return;
+    let unit = NEXT_AUTO_SETTLE_UNIT[after.unit];
+    while (unit !== after.unit && joinAutoSettleAfterDays(after.amount, unit) === null) {
+      unit = NEXT_AUTO_SETTLE_UNIT[unit];
+    }
+    const days = joinAutoSettleAfterDays(after.amount, unit);
+    if (unit === after.unit || days === null) return;
+    setPreferredUnit(unit);
+    writeToAll({ sidebarAutoSettleAfterDays: days });
   };
 
   return (
@@ -672,25 +690,37 @@ function AutoSettleSettingsRows() {
       <SettingsSwitchRow
         icon="clock"
         label="Auto-settle inactive threads"
-        subtitle={afterDays === null ? undefined : `After ${afterDays} days without activity`}
+        subtitle={
+          afterDays === null
+            ? undefined
+            : `After ${formatAutoSettleAfterDays(afterDays)} without activity`
+        }
         value={afterDays !== null}
         onValueChange={(value) =>
           writeToAll({ sidebarAutoSettleAfterDays: value ? AUTO_SETTLE_DEFAULT_DAYS : null })
         }
       />
-      {afterDays !== null ? (
+      {after !== null ? (
         <View className="flex-row items-center gap-4 border-t border-border-subtle p-4">
-          <Text className="flex-1 text-lg text-foreground">Days before auto-settle</Text>
+          <Text className="flex-1 text-lg text-foreground">Inactivity before auto-settle</Text>
           <TextInput
             className="min-h-10 w-20 rounded-xl px-3 py-2 text-center text-base"
             keyboardType="number-pad"
             returnKeyType="done"
-            value={daysDraft ?? String(afterDays)}
-            onChangeText={setDaysDraft}
-            onBlur={commitDays}
-            onSubmitEditing={commitDays}
-            accessibilityLabel="Days before auto-settle"
+            value={amountDraft ?? String(after.amount)}
+            onChangeText={setAmountDraft}
+            onBlur={commitAmount}
+            onSubmitEditing={commitAmount}
+            accessibilityLabel="Inactivity before auto-settle"
           />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Unit: ${after.unit}. Tap to change.`}
+            onPress={cycleUnit}
+            className="min-w-20 items-center rounded-full bg-subtle px-4 py-2 active:opacity-70"
+          >
+            <Text className="text-base font-t3-medium text-foreground">{after.unit}</Text>
+          </Pressable>
         </View>
       ) : null}
       {mismatches.length > 0 ? (

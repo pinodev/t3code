@@ -97,6 +97,27 @@ describe("resolveAutoSettlementAt", () => {
     expect(decide(makeThread({ latestUserMessageAt: "2026-08-25T12:00:00.000Z" }))).toBe(false);
   });
 
+  it("honours sub-day thresholds stored as fractional days", () => {
+    const completedAt = (at: string) =>
+      makeThread({
+        latestUserMessageAt: "2026-08-28T09:00:00.000Z",
+        latestTurn: {
+          turnId: TurnId.make("turn-recent"),
+          state: "completed",
+          requestedAt: "2026-08-28T09:00:00.000Z",
+          startedAt: "2026-08-28T09:00:01.000Z",
+          completedAt: at,
+          assistantMessageId: null,
+        },
+      });
+    const oneMinute = { days: 1 / 1440 };
+    expect(decide(completedAt("2026-08-28T11:58:59.000Z"), null, oneMinute)).toBe(true);
+    expect(decide(completedAt("2026-08-28T11:59:30.000Z"), null, oneMinute)).toBe(false);
+    const oneHour = { days: 1 / 24 };
+    expect(decide(completedAt("2026-08-28T10:59:00.000Z"), null, oneHour)).toBe(true);
+    expect(decide(completedAt("2026-08-28T11:30:00.000Z"), null, oneHour)).toBe(false);
+  });
+
   it("settles inactive threads with open pull requests", () => {
     expect(decide(makeThread(), { state: "open", updatedAt: NOW })).toBe(true);
   });

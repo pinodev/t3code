@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  formatAutoSettleAfterDays,
   resolveEnvironmentMachineKind,
   type ServerSettings,
 } from "@t3tools/contracts";
@@ -46,9 +47,7 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
   }
   if (typeof value === "boolean") return value ? "On" : "Off";
   if (typeof value === "number") {
-    return key === "sidebarAutoSettleAfterDays"
-      ? `${value} ${value === 1 ? "day" : "days"}`
-      : String(value);
+    return key === "sidebarAutoSettleAfterDays" ? formatAutoSettleAfterDays(value) : String(value);
   }
   if (typeof value === "string") {
     if (key === "defaultThreadEnvMode" && (value === "local" || value === "worktree")) {

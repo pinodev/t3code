@@ -820,7 +820,6 @@ describe("resolveSidebarThreadStatus", () => {
 
 describe("global visibility filter", () => {
   const base = {
-    enabled: true,
     terms: ["(PS26)", " (PS252) ", ""],
     caseSensitive: false,
     inverted: false,
@@ -836,10 +835,10 @@ describe("global visibility filter", () => {
     expect(isVisibleByGlobalFilter("Unrelated", base)).toBe(false);
   });
 
-  it("inverts matches and treats disabled or empty filters as pass-through", () => {
+  it("inverts matches and treats an off or empty filter as pass-through", () => {
     expect(isVisibleByGlobalFilter("Build (PS26)", { ...base, inverted: true })).toBe(false);
     expect(isVisibleByGlobalFilter("Unrelated", { ...base, inverted: true })).toBe(true);
-    expect(isVisibleByGlobalFilter("Unrelated", { ...base, enabled: false })).toBe(true);
+    expect(isVisibleByGlobalFilter("Unrelated", null)).toBe(true);
     expect(isVisibleByGlobalFilter("Unrelated", { ...base, terms: [] })).toBe(true);
   });
 });

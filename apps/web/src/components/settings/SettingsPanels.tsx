@@ -1,6 +1,13 @@
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
-import { ArchiveIcon, ArchiveX, ChevronRightIcon, SettingsIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveX,
+  ChevronRightIcon,
+  PlusIcon,
+  SettingsIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -30,16 +37,22 @@ import {
   MAX_PROMPT_FONT_SIZE,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_TERMINAL_FONT_SIZE,
+  AUTO_SETTLE_UNIT_MINUTES,
+  type AutoSettleUnit,
+  joinAutoSettleAfterDays,
+  splitAutoSettleAfterDays,
   MIN_CODE_FONT_SIZE,
   MIN_APPEARANCE_CONTRAST,
   MIN_GLASS_OPACITY,
   MIN_INTERFACE_FONT_SIZE,
   MIN_PANEL_ANIMATION_DURATION_MS,
   MIN_PROMPT_FONT_SIZE,
-  MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   type ResponseStreamingMode,
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
+  type GlobalFilter,
+  nextGlobalFilterName,
+  resolveGlobalFilters,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -90,7 +103,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
-import { isMacPlatform } from "../../lib/utils";
+import { isMacPlatform, randomUUID } from "../../lib/utils";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -138,6 +151,7 @@ import {
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -1940,8 +1954,13 @@ function FontFamilySettingsRow({
 }
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
+const AUTO_SETTLE_UNIT_LABELS: Record<AutoSettleUnit, string> = {
+  minutes: "Minutes",
+  hours: "Hours",
+  days: "Days",
+};
 
-function AutoSettleDaysInput({
+function AutoSettleAfterInput({
   value,
   onCommit,
 }: {
@@ -1949,37 +1968,61 @@ function AutoSettleDaysInput({
   onCommit: (days: number) => void;
 }) {
   // Local draft so the field can be emptied mid-edit; the setting only moves
-  // on valid input and snaps back to the persisted value on blur.
-  const [draft, setDraft] = useState(String(value));
+  // on valid input and snaps back to the persisted value on blur. The unit is
+  // local too, so "24 hours" stays in hours instead of turning into "1 day".
+  const [preferredUnit, setPreferredUnit] = useState(() => splitAutoSettleAfterDays(value).unit);
+  const { amount, unit } = splitAutoSettleAfterDays(value, preferredUnit);
+  const [draft, setDraft] = useState(String(amount));
   useEffect(() => {
-    setDraft(String(value));
-  }, [value]);
+    setDraft(String(amount));
+  }, [amount]);
 
   return (
-    <Input
-      size="sm"
-      type="number"
-      min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
-      max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
-      className="w-full sm:w-24"
-      value={draft}
-      onChange={(event) => {
-        setDraft(event.target.value);
-        // Number(), not parseInt: "3.5" must be rejected (not truncated to a
-        // committed 3 while the field shows 3.5) — commit only when the
-        // persisted value matches the displayed one.
-        const parsed = Number(event.target.value);
-        if (
-          Number.isInteger(parsed) &&
-          parsed >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
-          parsed <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS
-        ) {
-          onCommit(parsed);
+    <div className="flex w-full gap-2 sm:w-auto">
+      <Input
+        size="sm"
+        type="number"
+        min={1}
+        max={
+          (MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS * AUTO_SETTLE_UNIT_MINUTES.days) /
+          AUTO_SETTLE_UNIT_MINUTES[unit]
         }
-      }}
-      onBlur={() => setDraft(String(value))}
-      aria-label="Days of inactivity before auto-settle"
-    />
+        className="w-full sm:w-24"
+        value={draft}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          // Number(), not parseInt: "3.5" must be rejected (not truncated to a
+          // committed 3 while the field shows 3.5) — commit only when the
+          // persisted value matches the displayed one.
+          const days = joinAutoSettleAfterDays(Number(event.target.value), unit);
+          if (days !== null) onCommit(days);
+        }}
+        onBlur={() => setDraft(String(amount))}
+        aria-label="Inactivity before auto-settle"
+      />
+      <Select
+        value={unit}
+        onValueChange={(next) => {
+          if (next !== "minutes" && next !== "hours" && next !== "days") return;
+          // Keep the amount and change its unit; "200 days" is out of range.
+          const days = joinAutoSettleAfterDays(amount, next);
+          if (days === null) return;
+          setPreferredUnit(next);
+          onCommit(days);
+        }}
+      >
+        <SelectTrigger size="sm" className="w-full sm:w-28" aria-label="Auto-settle unit">
+          <SelectValue>{AUTO_SETTLE_UNIT_LABELS[unit]}</SelectValue>
+        </SelectTrigger>
+        <SelectPopup align="end" alignItemWithTrigger={false}>
+          {(["minutes", "hours", "days"] as const).map((option) => (
+            <SelectItem key={option} hideIndicator value={option}>
+              {AUTO_SETTLE_UNIT_LABELS[option]}
+            </SelectItem>
+          ))}
+        </SelectPopup>
+      </Select>
+    </div>
   );
 }
 
@@ -2058,6 +2101,163 @@ function LegacyFeaturesSection() {
         </CollapsiblePanel>
       </Collapsible>
     </section>
+  );
+}
+
+const GLOBAL_FILTER_OFF = "off";
+
+/**
+ * Saved global filters as tabs: "Off" or one saved filter is active, so
+ * switching is one click. The rows below edit the active filter.
+ */
+function GlobalFilterSettings() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const { filters, activeFilter } = resolveGlobalFilters(settings);
+  // Always write both keys: the first edit also migrates the legacy filter.
+  const saveFilters = (nextFilters: readonly GlobalFilter[], activeId: string | null) =>
+    updateSettings({ globalFilters: nextFilters, activeGlobalFilterId: activeId });
+  const updateActiveFilter = (patch: Partial<Omit<GlobalFilter, "id">>) => {
+    if (activeFilter === null) return;
+    saveFilters(
+      filters.map((filter) => (filter.id === activeFilter.id ? { ...filter, ...patch } : filter)),
+      activeFilter.id,
+    );
+  };
+
+  return (
+    <>
+      <SettingsRow
+        {...searchableSetting("global-filter")}
+        description="Show only projects and threads whose names match the active filter."
+      >
+        <div className="flex flex-wrap items-center gap-2 pb-2">
+          <ToggleGroup
+            aria-label="Active global filter"
+            className="flex-wrap"
+            variant="segmented"
+            value={[activeFilter?.id ?? GLOBAL_FILTER_OFF]}
+            onValueChange={(value) => {
+              const next = value[0];
+              // Clicking the pressed tab unpresses it; keep the selection.
+              if (next === undefined) return;
+              saveFilters(filters, next === GLOBAL_FILTER_OFF ? null : next);
+            }}
+          >
+            <Toggle value={GLOBAL_FILTER_OFF}>Off</Toggle>
+            {filters.map((filter) => (
+              <Toggle key={filter.id} value={filter.id}>
+                {filter.name.trim() || "Untitled"}
+              </Toggle>
+            ))}
+          </ToggleGroup>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Add global filter"
+            onClick={() => {
+              const filter: GlobalFilter = {
+                id: randomUUID(),
+                name: nextGlobalFilterName(filters),
+                terms: [],
+                caseSensitive: false,
+                inverted: false,
+              };
+              saveFilters([...filters, filter], filter.id);
+            }}
+          >
+            <PlusIcon />
+          </Button>
+        </div>
+      </SettingsRow>
+      {activeFilter !== null ? (
+        <>
+          <SettingsRow
+            title="Filter name"
+            description="Shown on the filter's tab."
+            control={
+              <div className="flex w-full items-center gap-2 sm:w-auto">
+                <Input
+                  key={activeFilter.id}
+                  size="sm"
+                  className="w-full sm:w-48"
+                  aria-label="Global filter name"
+                  defaultValue={activeFilter.name}
+                  onBlur={(event) => {
+                    const name = event.currentTarget.value.trim();
+                    if (name.length > 0 && name !== activeFilter.name) {
+                      updateActiveFilter({ name });
+                    }
+                  }}
+                />
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="Delete global filter"
+                  onClick={() =>
+                    saveFilters(
+                      filters.filter((filter) => filter.id !== activeFilter.id),
+                      null,
+                    )
+                  }
+                >
+                  <Trash2Icon />
+                </Button>
+              </div>
+            }
+          />
+          <SettingsRow
+            {...searchableSetting("global-filter-terms")}
+            description="Enter one string per line. An item matches when its name contains any string."
+            control={
+              <Textarea
+                key={`${activeFilter.id}:${activeFilter.terms.join("\n")}`}
+                className="min-h-20 w-full sm:w-72"
+                aria-label="Global filter strings"
+                defaultValue={activeFilter.terms.join("\n")}
+                placeholder={"(PS26)\n(PS252)"}
+                onBlur={(event) =>
+                  updateActiveFilter({
+                    terms: [
+                      ...new Set(
+                        event.currentTarget.value
+                          .split(/\r?\n/)
+                          .map((term) => term.trim())
+                          .filter(Boolean),
+                      ),
+                    ],
+                  })
+                }
+              />
+            }
+          />
+          <SettingsRow
+            {...searchableSetting("global-filter-case-sensitive")}
+            description="Match uppercase and lowercase exactly."
+            control={
+              <Switch
+                checked={activeFilter.caseSensitive}
+                onCheckedChange={(checked) =>
+                  updateActiveFilter({ caseSensitive: Boolean(checked) })
+                }
+                aria-label="Case-sensitive global filter"
+              />
+            }
+          />
+          <SettingsRow
+            {...searchableSetting("global-filter-inverted")}
+            description="Hide matching names instead of showing only matches."
+            control={
+              <Switch
+                checked={activeFilter.inverted}
+                onCheckedChange={(checked) => updateActiveFilter({ inverted: Boolean(checked) })}
+                aria-label="Invert global filter"
+              />
+            }
+          />
+        </>
+      ) : null}
+    </>
   );
 }
 
@@ -2143,70 +2343,7 @@ export function GeneralSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="visibility" title="Visibility">
-        <SettingsRow
-          {...searchableSetting("global-filter")}
-          description="Filter project names and thread titles with the same set of strings."
-          control={
-            <Switch
-              checked={settings.globalFilterEnabled}
-              onCheckedChange={(checked) =>
-                updateSettings({ globalFilterEnabled: Boolean(checked) })
-              }
-              aria-label="Enable global filter"
-            />
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("global-filter-terms")}
-          description="Enter one string per line. An item matches when its name contains any string."
-          control={
-            <Textarea
-              key={settings.globalFilterTerms.join("\n")}
-              className="min-h-20 w-full sm:w-72"
-              aria-label="Global filter strings"
-              defaultValue={settings.globalFilterTerms.join("\n")}
-              placeholder={"(PS26)\n(PS252)"}
-              onBlur={(event) =>
-                updateSettings({
-                  globalFilterTerms: [
-                    ...new Set(
-                      event.currentTarget.value
-                        .split(/\r?\n/)
-                        .map((term) => term.trim())
-                        .filter(Boolean),
-                    ),
-                  ],
-                })
-              }
-            />
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("global-filter-case-sensitive")}
-          description="Match uppercase and lowercase exactly."
-          control={
-            <Switch
-              checked={settings.globalFilterCaseSensitive}
-              onCheckedChange={(checked) =>
-                updateSettings({ globalFilterCaseSensitive: Boolean(checked) })
-              }
-              aria-label="Case-sensitive global filter"
-            />
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("global-filter-inverted")}
-          description="Hide matching names instead of showing only matches."
-          control={
-            <Switch
-              checked={settings.globalFilterInverted}
-              onCheckedChange={(checked) =>
-                updateSettings({ globalFilterInverted: Boolean(checked) })
-              }
-              aria-label="Invert global filter"
-            />
-          }
-        />
+        <GlobalFilterSettings />
         <SettingsRow
           {...searchableSetting("hide-local-items")}
           description="Hide local projects and threads from lists and searches."
@@ -2292,7 +2429,7 @@ export function GeneralSettingsPanel() {
                 title={searchableSetting("days-before-auto-settle").title}
                 description="Any new activity un-settles a thread automatically."
                 control={
-                  <AutoSettleDaysInput
+                  <AutoSettleAfterInput
                     value={settings.sidebarAutoSettleAfterDays}
                     onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
                   />

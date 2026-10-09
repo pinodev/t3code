@@ -157,6 +157,7 @@ import {
   firstValidTimestampMs,
   hasUnseenCompletion,
   isVisibleByGlobalFilter,
+  selectActiveGlobalFilter,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -2149,10 +2150,7 @@ export default function Sidebar() {
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
-  const globalFilterEnabled = useClientSettings((s) => s.globalFilterEnabled);
-  const globalFilterTerms = useClientSettings((s) => s.globalFilterTerms);
-  const globalFilterCaseSensitive = useClientSettings((s) => s.globalFilterCaseSensitive);
-  const globalFilterInverted = useClientSettings((s) => s.globalFilterInverted);
+  const globalVisibilityFilter = useClientSettings(selectActiveGlobalFilter);
   const hideLocalItems = useClientSettings((s) => s.hideLocalItems);
   const {
     settleThread,
@@ -2283,15 +2281,6 @@ export default function Sidebar() {
         ),
       ),
     [environments],
-  );
-  const globalVisibilityFilter = useMemo(
-    () => ({
-      enabled: globalFilterEnabled,
-      terms: globalFilterTerms,
-      caseSensitive: globalFilterCaseSensitive,
-      inverted: globalFilterInverted,
-    }),
-    [globalFilterCaseSensitive, globalFilterEnabled, globalFilterInverted, globalFilterTerms],
   );
   const visibleProjects = useMemo(
     () =>

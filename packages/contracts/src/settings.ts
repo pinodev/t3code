@@ -70,7 +70,13 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 );
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
-export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 1;
+const MINUTES_PER_DAY = 24 * 60;
+/**
+ * The inactivity threshold stays stored in days so whole-day values from older
+ * settings files decode unchanged; fractions express hours and minutes, down
+ * to one minute.
+ */
+export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 1 / MINUTES_PER_DAY;
 export const MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 90;
 export const SidebarAutoSettleAfterDays = Schema.Number.check(
   Schema.isBetween({
@@ -80,6 +86,44 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
 );
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
 const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 3;
+
+export const AUTO_SETTLE_UNIT_MINUTES = { minutes: 1, hours: 60, days: MINUTES_PER_DAY } as const;
+export type AutoSettleUnit = keyof typeof AUTO_SETTLE_UNIT_MINUTES;
+const AUTO_SETTLE_UNITS_LARGEST_FIRST: readonly AutoSettleUnit[] = ["days", "hours", "minutes"];
+
+/**
+ * Splits a stored threshold into the amount and unit a settings form shows.
+ * Keeps `preferredUnit` while it still divides the threshold evenly, so typing
+ * "24" hours does not flip the unit picker to days.
+ */
+export function splitAutoSettleAfterDays(
+  days: number,
+  preferredUnit?: AutoSettleUnit,
+): { readonly amount: number; readonly unit: AutoSettleUnit } {
+  const minutes = Math.max(1, Math.round(days * MINUTES_PER_DAY));
+  const unit =
+    preferredUnit !== undefined && minutes % AUTO_SETTLE_UNIT_MINUTES[preferredUnit] === 0
+      ? preferredUnit
+      : AUTO_SETTLE_UNITS_LARGEST_FIRST.find(
+          (candidate) => minutes % AUTO_SETTLE_UNIT_MINUTES[candidate] === 0,
+        )!;
+  return { amount: minutes / AUTO_SETTLE_UNIT_MINUTES[unit], unit };
+}
+
+/** The stored threshold for a whole `amount` of `unit`, or null when out of range. */
+export function joinAutoSettleAfterDays(amount: number, unit: AutoSettleUnit): number | null {
+  if (!Number.isInteger(amount) || amount < 1) return null;
+  const minutes = amount * AUTO_SETTLE_UNIT_MINUTES[unit];
+  return minutes <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS * MINUTES_PER_DAY
+    ? minutes / MINUTES_PER_DAY
+    : null;
+}
+
+/** "1 hour", "90 minutes", "3 days". */
+export function formatAutoSettleAfterDays(days: number): string {
+  const { amount, unit } = splitAutoSettleAfterDays(days);
+  return `${amount} ${amount === 1 ? unit.slice(0, -1) : unit}`;
+}
 export const MIN_GLASS_OPACITY = 40;
 export const MAX_GLASS_OPACITY = 100;
 export const GlassOpacity = Schema.Int.check(
@@ -282,6 +326,16 @@ export const LoadBalancingWeights = Schema.Record(
 
 export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
+/** A saved project and thread name filter. Items match when a name contains any term. */
+export const GlobalFilter = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: Schema.String,
+  terms: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  caseSensitive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  inverted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type GlobalFilter = typeof GlobalFilter.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -348,12 +402,18 @@ export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadUnpin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Legacy single global filter. Read only through `resolveGlobalFilters`,
+  // which folds it into the first saved filter until `globalFilters` is set.
   globalFilterEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   globalFilterTerms: Schema.Array(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   globalFilterCaseSensitive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   globalFilterInverted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Saved global filters. Absent until first edited; see `resolveGlobalFilters`. */
+  globalFilters: Schema.optionalKey(Schema.Array(GlobalFilter)),
+  /** The saved filter applied to project and thread lists; `null` turns filtering off. */
+  activeGlobalFilterId: Schema.optionalKey(Schema.NullOr(Schema.String)),
   hideLocalItems: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -467,6 +527,60 @@ export const ClientSettingsSchema = Schema.Struct({
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
 export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeSync(ClientSettingsSchema)({});
+
+/** Id of the saved filter that the legacy single global filter migrates into. */
+export const LEGACY_GLOBAL_FILTER_ID = "filter-1";
+
+type GlobalFilterSettings = Pick<
+  ClientSettings,
+  | "globalFilters"
+  | "activeGlobalFilterId"
+  | "globalFilterEnabled"
+  | "globalFilterTerms"
+  | "globalFilterCaseSensitive"
+  | "globalFilterInverted"
+>;
+
+/**
+ * The saved global filters and the active one. Settings that predate saved
+ * filters fold the legacy single filter into "Filter 1", active only when it
+ * was enabled; writers then persist `globalFilters` and the legacy keys go unread.
+ */
+export function resolveGlobalFilters(settings: GlobalFilterSettings): {
+  readonly filters: readonly GlobalFilter[];
+  readonly activeFilter: GlobalFilter | null;
+} {
+  let filters = settings.globalFilters;
+  let activeId = settings.activeGlobalFilterId ?? null;
+  if (filters === undefined) {
+    const legacyUsed =
+      settings.globalFilterEnabled ||
+      settings.globalFilterTerms.length > 0 ||
+      settings.globalFilterCaseSensitive ||
+      settings.globalFilterInverted;
+    filters = legacyUsed
+      ? [
+          {
+            id: LEGACY_GLOBAL_FILTER_ID,
+            name: "Filter 1",
+            terms: settings.globalFilterTerms,
+            caseSensitive: settings.globalFilterCaseSensitive,
+            inverted: settings.globalFilterInverted,
+          },
+        ]
+      : [];
+    activeId = legacyUsed && settings.globalFilterEnabled ? LEGACY_GLOBAL_FILTER_ID : null;
+  }
+  return { filters, activeFilter: filters.find((filter) => filter.id === activeId) ?? null };
+}
+
+/** "Filter N" for the next saved filter, skipping names already taken. */
+export function nextGlobalFilterName(filters: readonly GlobalFilter[]): string {
+  const names = new Set(filters.map((filter) => filter.name));
+  let index = filters.length + 1;
+  while (names.has(`Filter ${index}`)) index += 1;
+  return `Filter ${index}`;
+}
 
 // ── Server Settings (server-authoritative) ────────────────────
 
@@ -1454,6 +1568,8 @@ export const ClientSettingsPatch = Schema.Struct({
   globalFilterTerms: Schema.optionalKey(Schema.Array(Schema.String)),
   globalFilterCaseSensitive: Schema.optionalKey(Schema.Boolean),
   globalFilterInverted: Schema.optionalKey(Schema.Boolean),
+  globalFilters: Schema.optionalKey(Schema.Array(GlobalFilter)),
+  activeGlobalFilterId: Schema.optionalKey(Schema.NullOr(Schema.String)),
   hideLocalItems: Schema.optionalKey(Schema.Boolean),
   diffFilesCollapsed: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),

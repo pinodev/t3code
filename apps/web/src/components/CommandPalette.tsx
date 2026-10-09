@@ -37,6 +37,7 @@ import {
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
+  resolveGlobalFilters,
 } from "@t3tools/contracts";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -44,6 +45,7 @@ import {
   ArrowLeftIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
+  FilterIcon,
   FolderIcon,
   FolderPlusIcon,
   GitPullRequestArrowIcon,
@@ -73,7 +75,7 @@ import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstra
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
@@ -630,6 +632,7 @@ function OpenCommandPaletteDialog(props: {
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const clientSettings = useClientSettings();
+  const updateClientSettings = useUpdateClientSettings();
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -1825,6 +1828,41 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/settings" });
     },
   });
+
+  const { filters: globalFilters, activeFilter: activeGlobalFilter } =
+    resolveGlobalFilters(clientSettings);
+  if (globalFilters.length > 0) {
+    const globalFilterItem = (id: string | null, name: string): CommandPaletteActionItem => ({
+      kind: "action",
+      value: `action:global-filter:${id ?? "off"}`,
+      searchTerms: ["global filter", name],
+      title: name,
+      ...((activeGlobalFilter?.id ?? null) === id ? { description: "Active" } : {}),
+      icon: <FilterIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        // Writing the list too migrates a legacy filter on first switch.
+        await updateClientSettings({ globalFilters, activeGlobalFilterId: id });
+      },
+    });
+    actionItems.push({
+      kind: "submenu",
+      value: "action:global-filter",
+      searchTerms: ["global filter", "visibility", "switch filter", "show hide projects threads"],
+      title: "Switch global filter...",
+      icon: <FilterIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <FilterIcon className={ADDON_ICON_CLASS} />,
+      groups: [
+        {
+          value: "global-filters",
+          label: "Global filters",
+          items: [
+            globalFilterItem(null, "Off"),
+            ...globalFilters.map((filter) => globalFilterItem(filter.id, filter.name)),
+          ],
+        },
+      ],
+    });
+  }
 
   // Target the active thread or draft's project, falling back to the first sidebar group.
   const contextualProjectGroup =

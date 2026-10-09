@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
+import { ProjectId } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
+  formatAutoSettleAfterDays,
+  joinAutoSettleAfterDays,
+  nextGlobalFilterName,
+  resolveGlobalFilters,
   resolveProviderInstanceEnabled,
   ServerSettings,
+  splitAutoSettleAfterDays,
   ServerSettingsPatch,
 } from "./settings.ts";
 
@@ -534,6 +540,66 @@ describe("ClientSettings visibility filters", () => {
       hideLocalItems: true,
     });
   });
+
+  it("folds a legacy enabled filter into the first saved filter", () => {
+    const settings = decodeClientSettings({
+      globalFilterEnabled: true,
+      globalFilterTerms: ["(PS26)"],
+      globalFilterInverted: true,
+    });
+    const { filters, activeFilter } = resolveGlobalFilters(settings);
+    expect(filters).toEqual([
+      { id: "filter-1", name: "Filter 1", terms: ["(PS26)"], caseSensitive: false, inverted: true },
+    ]);
+    expect(activeFilter).toBe(filters[0]);
+  });
+
+  it("keeps a legacy disabled filter saved but inactive", () => {
+    const { filters, activeFilter } = resolveGlobalFilters(
+      decodeClientSettings({ globalFilterTerms: ["(PS252)"] }),
+    );
+    expect(filters.map((filter) => filter.terms)).toEqual([["(PS252)"]]);
+    expect(activeFilter).toBeNull();
+  });
+
+  it("starts without saved filters on a fresh install", () => {
+    expect(resolveGlobalFilters(decodeClientSettings({}))).toEqual({
+      filters: [],
+      activeFilter: null,
+    });
+  });
+
+  it("prefers saved filters over legacy keys and ignores a dangling active id", () => {
+    const saved = decodeClientSettings({
+      globalFilterEnabled: true,
+      globalFilterTerms: ["legacy"],
+      globalFilters: [
+        { id: "a", name: "Work" },
+        { id: "b", name: "Home", terms: ["home"] },
+      ],
+      activeGlobalFilterId: "b",
+    });
+    const resolved = resolveGlobalFilters(saved);
+    expect(resolved.filters.map((filter) => filter.name)).toEqual(["Work", "Home"]);
+    expect(resolved.activeFilter?.terms).toEqual(["home"]);
+    expect(
+      resolveGlobalFilters({ ...saved, activeGlobalFilterId: "gone" }).activeFilter,
+    ).toBeNull();
+    expect(resolveGlobalFilters({ ...saved, activeGlobalFilterId: null }).activeFilter).toBeNull();
+  });
+
+  it("names new filters after the next free number", () => {
+    const filter = (name: string) => ({
+      id: name,
+      name,
+      terms: [],
+      caseSensitive: false,
+      inverted: false,
+    });
+    expect(nextGlobalFilterName([])).toBe("Filter 1");
+    expect(nextGlobalFilterName([filter("Filter 1")])).toBe("Filter 2");
+    expect(nextGlobalFilterName([filter("Work"), filter("Filter 2")])).toBe("Filter 3");
+  });
 });
 
 describe("ClientSettings context window meter", () => {
@@ -598,9 +664,65 @@ describe("ServerSettings thread settlement", () => {
     ).toMatchObject({ sidebarAutoSettleAfterDays: null, sidebarAutoSettleOnMerge: false });
   });
 
-  it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
-    expect(() => decodeServerSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
-    expect(() => decodeServerSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
+  it.each([-1, 0, 1 / 2880, 91])(
+    "rejects an auto-settle threshold outside one minute..90 days: %s",
+    (value) => {
+      expect(() => decodeServerSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
+      expect(() => decodeServerSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
+    },
+  );
+
+  it("decodes legacy whole-day thresholds unchanged and accepts minute thresholds", () => {
+    expect(decodeServerSettings({ sidebarAutoSettleAfterDays: 7 }).sidebarAutoSettleAfterDays).toBe(
+      7,
+    );
+    for (const [amount, unit] of [
+      [1, "minutes"],
+      [1, "hours"],
+    ] as const) {
+      const days = joinAutoSettleAfterDays(amount, unit)!;
+      expect(
+        decodeServerSettings({ sidebarAutoSettleAfterDays: days }).sidebarAutoSettleAfterDays,
+      ).toBe(days);
+      expect(
+        decodeServerSettings({
+          projectSettingsOverrides: { project: { sidebarAutoSettleAfterDays: days } },
+        }).projectSettingsOverrides[ProjectId.make("project")]?.sidebarAutoSettleAfterDays,
+      ).toBe(days);
+    }
+  });
+});
+
+describe("auto-settle threshold units", () => {
+  it("round-trips amounts through the stored day value", () => {
+    expect(splitAutoSettleAfterDays(3)).toEqual({ amount: 3, unit: "days" });
+    expect(splitAutoSettleAfterDays(joinAutoSettleAfterDays(1, "hours")!)).toEqual({
+      amount: 1,
+      unit: "hours",
+    });
+    expect(splitAutoSettleAfterDays(joinAutoSettleAfterDays(90, "minutes")!)).toEqual({
+      amount: 90,
+      unit: "minutes",
+    });
+    expect(splitAutoSettleAfterDays(1, "hours")).toEqual({ amount: 24, unit: "hours" });
+    expect(splitAutoSettleAfterDays(joinAutoSettleAfterDays(90, "minutes")!, "hours")).toEqual({
+      amount: 90,
+      unit: "minutes",
+    });
+  });
+
+  it("rejects partial, zero and out-of-range amounts", () => {
+    expect(joinAutoSettleAfterDays(0, "minutes")).toBeNull();
+    expect(joinAutoSettleAfterDays(1.5, "hours")).toBeNull();
+    expect(joinAutoSettleAfterDays(91, "days")).toBeNull();
+    expect(joinAutoSettleAfterDays(90 * 24, "hours")).toBe(90);
+  });
+
+  it("formats thresholds with singular and plural units", () => {
+    expect(formatAutoSettleAfterDays(1)).toBe("1 day");
+    expect(formatAutoSettleAfterDays(3)).toBe("3 days");
+    expect(formatAutoSettleAfterDays(joinAutoSettleAfterDays(1, "hours")!)).toBe("1 hour");
+    expect(formatAutoSettleAfterDays(joinAutoSettleAfterDays(1, "minutes")!)).toBe("1 minute");
   });
 });
 

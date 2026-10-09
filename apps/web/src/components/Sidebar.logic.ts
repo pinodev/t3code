@@ -6,7 +6,12 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type { ContextMenuItem } from "@t3tools/contracts";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import {
+  type ClientSettings,
+  resolveGlobalFilters,
+  type SidebarProjectSortOrder,
+  type SidebarThreadSortOrder,
+} from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/unstable/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
 import {
@@ -948,18 +953,25 @@ export function searchSidebarThreads<
 }
 
 export interface GlobalVisibilityFilter {
-  readonly enabled: boolean;
   readonly terms: readonly string[];
   readonly caseSensitive: boolean;
   readonly inverted: boolean;
 }
 
+/** The active saved global filter; `null` when filtering is off. */
+export const selectActiveGlobalFilter = (settings: ClientSettings) =>
+  resolveGlobalFilters(settings).activeFilter;
+
 export function normalizeGlobalFilterTerms(terms: readonly string[]): string[] {
   return [...new Set(terms.map((term) => term.trim()).filter((term) => term.length > 0))];
 }
 
-export function isVisibleByGlobalFilter(value: string, filter: GlobalVisibilityFilter): boolean {
-  if (!filter.enabled) return true;
+/** Whether a project or thread name passes the active filter; `null` lets everything through. */
+export function isVisibleByGlobalFilter(
+  value: string,
+  filter: GlobalVisibilityFilter | null,
+): boolean {
+  if (filter === null) return true;
   const terms = normalizeGlobalFilterTerms(filter.terms);
   if (terms.length === 0) return true;
   const candidate = filter.caseSensitive ? value : value.toLocaleLowerCase();
