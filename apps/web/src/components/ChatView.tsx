@@ -97,7 +97,10 @@ import {
 import { flushSync } from "react-dom";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
-import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
+import {
+  assistantCitationFromLocation,
+  isAssistantCitationHash,
+} from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
@@ -351,6 +354,7 @@ import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
+import type { MarkdownHeadingRequest } from "./chat/useMarkdownHeadingNavigation";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
@@ -1585,6 +1589,15 @@ export default function ChatView(props: ChatViewProps) {
       ? { citation, key: citationLocation.key ?? citationLocation.href }
       : null;
   }, [citationLocation.href, citationLocation.key, environmentId, threadId]);
+  // Any other hash names a markdown heading, as in `/<env>/<thread>#Turning-it-on`. Fragment
+  // links push the current history state again, so the key also carries the href.
+  const markdownHeadingRequest = useMemo<MarkdownHeadingRequest | null>(() => {
+    const hashIndex = citationLocation.href.indexOf("#");
+    const fragment = hashIndex === -1 ? "" : citationLocation.href.slice(hashIndex + 1);
+    return fragment.length > 0 && !isAssistantCitationHash(fragment)
+      ? { fragment, key: `${citationLocation.key ?? ""}:${citationLocation.href}` }
+      : null;
+  }, [citationLocation.href, citationLocation.key]);
   const { resolvedTheme } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
   const composerRuntimeMode = useComposerDraftStore(
@@ -9486,6 +9499,7 @@ export default function ChatView(props: ChatViewProps) {
               <MessagesTimeline
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                 citationHistoryLoading={threadDetailLoading}
+                markdownHeadingRequest={paintOnlyDisplayedTimeline ? null : markdownHeadingRequest}
                 {...(!paintOnlyDisplayedTimeline
                   ? {
                       onCiteAssistantText: citeAssistantText,

@@ -88,6 +88,7 @@ import { parseComposerContextHref } from "@t3tools/shared/composerContextReferen
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
+import { findMarkdownFragmentElement, rehypeMarkdownHeadingIds } from "../markdown-heading-anchors";
 import {
   artifactTemplateFromHastProperties,
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
@@ -503,7 +504,12 @@ const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
   rehypePreserveImageSourceMeta,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
+  rehypeMarkdownHeadingIds,
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [rehypeMarkdownHeadingIds] satisfies NonNullable<
+  ReactMarkdownOptions["rehypePlugins"]
+>;
 
 /** GitHub's own five alert kinds, in its colors: the glyph names the urgency, the title says it. */
 const GITHUB_ALERT_PRESENTATIONS: Record<
@@ -1729,45 +1735,24 @@ function hastHasText(node: unknown): boolean {
   return "children" in node && Array.isArray(node.children) && node.children.some(hastHasText);
 }
 
-const SANITIZED_FRAGMENT_PREFIX = "user-content-";
+/**
+ * Reveals a heading fragment that may live in another, possibly virtualized, message.
+ * Returns false when no message has the heading.
+ */
+export type MarkdownHeadingNavigator = (
+  fragment: string,
+  sourceMessageId: string | null,
+) => boolean;
 
-function decodeMarkdownFragmentId(href: string): string {
-  const encodedId = href.slice(1);
-  try {
-    return decodeURIComponent(encodedId);
-  } catch {
-    return encodedId;
-  }
-}
+/** Provided by the thread timeline, which can scroll rows that are not mounted. */
+export const MarkdownHeadingNavigationContext =
+  React.createContext<MarkdownHeadingNavigator | null>(null);
 
-function normalizeSanitizedFragmentId(id: string): string {
-  let normalizedId = id;
-  while (normalizedId.startsWith(SANITIZED_FRAGMENT_PREFIX)) {
-    normalizedId = normalizedId.slice(SANITIZED_FRAGMENT_PREFIX.length);
-  }
-  return normalizedId;
-}
-
-function findMarkdownFragmentTarget(anchor: HTMLAnchorElement, href: string): HTMLElement | null {
-  const decodedId = decodeMarkdownFragmentId(href);
-  const normalizedId = normalizeSanitizedFragmentId(decodedId);
-  const matchesFragment = (element: HTMLElement) =>
-    element.id === decodedId || normalizeSanitizedFragmentId(element.id) === normalizedId;
-  const markdownRoot = anchor.closest<HTMLElement>(".chat-markdown");
-  if (markdownRoot) {
-    const localTargets = Array.from(markdownRoot.querySelectorAll<HTMLElement>("[id]"));
-    const localTarget = localTargets.find(matchesFragment);
-    if (localTarget) return localTarget;
-  }
-
-  return (
-    document.getElementById(decodedId) ??
-    Array.from(document.querySelectorAll<HTMLElement>("[id]")).find(matchesFragment) ??
-    null
-  );
-}
-
-function handleMarkdownFragmentClick(event: ReactMouseEvent<HTMLAnchorElement>, href: string) {
+function handleMarkdownFragmentClick(
+  event: ReactMouseEvent<HTMLAnchorElement>,
+  href: string,
+  navigateToHeading: MarkdownHeadingNavigator | null,
+) {
   if (
     event.defaultPrevented ||
     event.button !== 0 ||
@@ -1779,14 +1764,26 @@ function handleMarkdownFragmentClick(event: ReactMouseEvent<HTMLAnchorElement>, 
     return;
   }
 
-  const target = findMarkdownFragmentTarget(event.currentTarget, href);
-  if (!target) return;
+  // Headings go through the timeline, which also reaches messages virtualized out of the
+  // DOM. Other ids, such as footnotes, resolve in this message first, then the document.
+  const anchor = event.currentTarget;
+  const navigated =
+    navigateToHeading?.(
+      href,
+      anchor.closest<HTMLElement>("[data-message-id]")?.dataset.messageId ?? null,
+    ) ?? false;
+  const markdownRoot = anchor.closest<HTMLElement>(".chat-markdown");
+  const target = navigated
+    ? null
+    : ((markdownRoot ? findMarkdownFragmentElement(markdownRoot, href) : null) ??
+      findMarkdownFragmentElement(document, href));
+  if (!target && !navigated) return;
 
   event.preventDefault();
   const nextUrl = new URL(window.location.href);
   nextUrl.hash = href.slice(1);
   window.history.pushState(window.history.state, "", nextUrl);
-  target.scrollIntoView({ block: "nearest" });
+  target?.scrollIntoView({ block: "nearest" });
 }
 
 function MarkdownExternalLinkContent({
@@ -2817,6 +2814,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       fileLinkChip,
       renderContextReference,
     } = use(ChatMarkdownRendererContext);
+    const navigateToHeading = use(MarkdownHeadingNavigationContext);
     const citation = href ? parseAssistantCitationHref(href) : null;
     if (citation) return <AssistantCitationChip citation={citation} />;
     const contextReference = href ? parseComposerContextHref(href) : null;
@@ -2888,7 +2886,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           onClick={(event) => {
             onClick?.(event);
             if (isSameDocumentLink && href) {
-              handleMarkdownFragmentClick(event, href);
+              handleMarkdownFragmentClick(event, href, navigateToHeading);
               return;
             }
             if (
@@ -3264,7 +3262,9 @@ function ChatMarkdown({
       <ChatMarkdownRendererContext value={componentState}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
-          rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
+          rehypePlugins={
+            parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
+          }
           skipHtml={false}
           components={CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}

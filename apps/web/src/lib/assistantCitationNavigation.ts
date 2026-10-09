@@ -21,11 +21,15 @@ export function assistantCitationHash(citation: AssistantCitation) {
   return `${CITATION_HASH_PREFIX}${Encoding.encodeBase64Url(formatAssistantCitationHref(citation))}`;
 }
 
+export function isAssistantCitationHash(hash: string) {
+  return hash.startsWith(CITATION_HASH_PREFIX);
+}
+
 export function assistantCitationFromLocation(href: string) {
   const hashIndex = href.indexOf("#");
   if (hashIndex === -1) return null;
   const hash = href.slice(hashIndex + 1);
-  if (!hash.startsWith(CITATION_HASH_PREFIX) || hash.length > 140_000) return null;
+  if (!isAssistantCitationHash(hash) || hash.length > 140_000) return null;
   try {
     return parseAssistantCitationHref(
       Result.getOrThrow(Encoding.decodeBase64UrlString(hash.slice(CITATION_HASH_PREFIX.length))),
