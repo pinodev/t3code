@@ -35,12 +35,14 @@ import {
   MAX_INTERFACE_FONT_SIZE,
   MAX_PANEL_ANIMATION_DURATION_MS,
   MAX_PROMPT_FONT_SIZE,
-  MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MAX_SIDEBAR_AUTO_SETTLE_AFTER_MINUTES,
   MAX_TERMINAL_FONT_SIZE,
   AUTO_SETTLE_UNIT_MINUTES,
   type AutoSettleUnit,
-  joinAutoSettleAfterDays,
-  splitAutoSettleAfterDays,
+  autoSettleAfterMinutesPatch,
+  joinAutoSettleAfterMinutes,
+  resolveAutoSettleAfterMinutes,
+  splitAutoSettleAfterMinutes,
   MIN_CODE_FONT_SIZE,
   MIN_APPEARANCE_CONTRAST,
   MIN_GLASS_OPACITY,
@@ -90,6 +92,7 @@ import {
 } from "./useScopedSettings";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { autoSettleMinutesInherited } from "./scopedSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
@@ -165,7 +168,7 @@ import {
   normalizeIntervalSeconds,
   PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
   hasChangedBackgroundActivitySettings,
-  resolveAutoSettleDraftCommit,
+  resolveAutoSettleDraftPatch,
   resolveBackgroundActivityProfileOption,
 } from "./SettingsPanels.logic";
 import {
@@ -561,7 +564,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Visible threads"]
         : []),
       ...(settings.sidebarAutoSettleAfterDays !==
-      DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
+        DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ||
+      settings.sidebarAutoSettleAfterMinutes !==
+        DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterMinutes
         ? ["Auto-settle inactive threads"]
         : []),
       ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
@@ -670,6 +675,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.enableProviderUpdateChecks,
       settings.continueThreadsAfterServerUpdate,
       settings.sidebarAutoSettleAfterDays,
+      settings.sidebarAutoSettleAfterMinutes,
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
@@ -765,6 +771,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
+      sidebarAutoSettleAfterMinutes: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterMinutes,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
@@ -1962,17 +1969,19 @@ const AUTO_SETTLE_UNIT_LABELS: Record<AutoSettleUnit, string> = {
 };
 
 function AutoSettleAfterInput({
-  value,
+  minutes,
   onCommit,
 }: {
-  value: number;
-  onCommit: (days: number) => void;
+  minutes: number;
+  onCommit: (patch: ReturnType<typeof autoSettleAfterMinutesPatch>) => void;
 }) {
   // Local draft, saved on blur or Enter (Escape discards it); invalid drafts
   // snap back to the persisted value. The unit is local too, so "24 hours"
   // stays in hours instead of turning into "1 day".
-  const [preferredUnit, setPreferredUnit] = useState(() => splitAutoSettleAfterDays(value).unit);
-  const { amount, unit } = splitAutoSettleAfterDays(value, preferredUnit);
+  const [preferredUnit, setPreferredUnit] = useState(
+    () => splitAutoSettleAfterMinutes(minutes).unit,
+  );
+  const { amount, unit } = splitAutoSettleAfterMinutes(minutes, preferredUnit);
   const [draft, setDraft] = useState(String(amount));
   useEffect(() => {
     setDraft(String(amount));
@@ -1984,16 +1993,13 @@ function AutoSettleAfterInput({
         size="sm"
         type="number"
         min={1}
-        max={
-          (MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS * AUTO_SETTLE_UNIT_MINUTES.days) /
-          AUTO_SETTLE_UNIT_MINUTES[unit]
-        }
+        max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_MINUTES / AUTO_SETTLE_UNIT_MINUTES[unit]}
         className="w-full sm:w-24"
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={() => {
-          const days = resolveAutoSettleDraftCommit(draft, unit, value);
-          if (days !== null) onCommit(days);
+          const patch = resolveAutoSettleDraftPatch(draft, unit, minutes);
+          if (patch !== null) onCommit(patch);
           else setDraft(String(amount));
         }}
         onKeyDown={(event) => {
@@ -2012,10 +2018,10 @@ function AutoSettleAfterInput({
         onValueChange={(next) => {
           if (next !== "minutes" && next !== "hours" && next !== "days") return;
           // Keep the amount and change its unit; "200 days" is out of range.
-          const days = joinAutoSettleAfterDays(amount, next);
-          if (days === null) return;
+          const nextMinutes = joinAutoSettleAfterMinutes(amount, next);
+          if (nextMinutes === null) return;
           setPreferredUnit(next);
-          onCommit(days);
+          onCommit(autoSettleAfterMinutesPatch(nextMinutes));
         }}
       >
         <SelectTrigger size="sm" className="w-full sm:w-28" aria-label="Auto-settle unit">
@@ -2272,7 +2278,7 @@ export function GeneralSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
-  const { scope, environment, connectedEnvironments } = useSettingsScope();
+  const { scope, environment, connectedEnvironments, target } = useSettingsScope();
   // The representative environment supplies the provider list for pickers;
   // a fanned-out model choice is validated against every target before it
   // is written. Per-machine tuning (background activity overrides) still
@@ -2284,6 +2290,12 @@ export function GeneralSettingsPanel() {
   const [tokenStreamingWarningOpen, setTokenStreamingWarningOpen] = useState(false);
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
   const serverProviders = environment?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
+  // At project scope, days from the project override beat minutes inherited
+  // from the environment.
+  const autoSettleAfterMinutes = resolveAutoSettleAfterMinutes(
+    settings,
+    target !== null && autoSettleMinutesInherited(target.sources),
+  );
   const supportsAutoSettlement =
     connectedEnvironments.length > 0 &&
     connectedEnvironments.every(
@@ -2397,6 +2409,9 @@ export function GeneralSettingsPanel() {
               }
             />
 
+            {/* The days key stands for the days and minutes pair: the rows'
+                inheritance and resets reach the minutes key through
+                withLinkedSettingKeys. */}
             <SettingsRow
               serverScoped
               settingKeys={["sidebarAutoSettleAfterDays"]}
@@ -2404,13 +2419,17 @@ export function GeneralSettingsPanel() {
               description="Sidebar threads with no activity for this long settle automatically."
               resetAction={
                 settings.sidebarAutoSettleAfterDays !==
-                DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ? (
+                  DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ||
+                settings.sidebarAutoSettleAfterMinutes !==
+                  DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterMinutes ? (
                   <SettingResetButton
                     label="auto-settle"
                     onClick={() =>
                       updateSettings({
                         sidebarAutoSettleAfterDays:
                           DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
+                        sidebarAutoSettleAfterMinutes:
+                          DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterMinutes,
                       })
                     }
                   />
@@ -2421,15 +2440,18 @@ export function GeneralSettingsPanel() {
                   settingKeys={["sidebarAutoSettleAfterDays"]}
                   checked={settings.sidebarAutoSettleAfterDays !== null}
                   onCheckedChange={(checked) =>
+                    // Off is days null. Minutes is cleared either way so both
+                    // keys stay in one scope and turning on starts at whole days.
                     updateSettings({
                       sidebarAutoSettleAfterDays: checked ? AUTO_SETTLE_DEFAULT_DAYS : null,
+                      sidebarAutoSettleAfterMinutes: null,
                     })
                   }
                   aria-label="Auto-settle inactive threads"
                 />
               }
             />
-            {settings.sidebarAutoSettleAfterDays !== null ? (
+            {autoSettleAfterMinutes !== null ? (
               <SettingsRow
                 serverScoped
                 settingKeys={["sidebarAutoSettleAfterDays"]}
@@ -2437,8 +2459,8 @@ export function GeneralSettingsPanel() {
                 description="Any new activity un-settles a thread automatically."
                 control={
                   <AutoSettleAfterInput
-                    value={settings.sidebarAutoSettleAfterDays}
-                    onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
+                    minutes={autoSettleAfterMinutes}
+                    onCommit={(patch) => updateSettings(patch)}
                   />
                 }
               />

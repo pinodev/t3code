@@ -1,6 +1,7 @@
 import {
   isProviderDriverKind,
   isProviderAvailable,
+  migrateSubDayAutoSettleSettings,
   resolveProviderInstanceEnabled,
   type ModelSelection,
   type ProjectId,
@@ -23,8 +24,12 @@ import {
   resolveBackgroundActivitySettings,
 } from "./backgroundActivitySettings.ts";
 
-const ServerSettingsJson = fromLenientJson(ServerSettings);
-const decodeServerSettingsJson = Schema.decodeUnknownOption(ServerSettingsJson);
+const decodeLenientJson = Schema.decodeUnknownOption(fromLenientJson(Schema.Unknown));
+const decodeServerSettingsValue = Schema.decodeUnknownOption(ServerSettings);
+const decodeServerSettingsJson = (raw: string) =>
+  Option.flatMap(decodeLenientJson(raw), (value) =>
+    decodeServerSettingsValue(migrateSubDayAutoSettleSettings(value)),
+  );
 
 /** @deprecated Read `resolveProjectSettings(...).settings.enableAgentBrowserAccess`. */
 export function resolveProjectAgentBrowserAccess(

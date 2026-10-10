@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   ProviderInstanceId,
+  resolveAutoSettleAfterMinutes,
   ThreadId,
   ProjectId,
   TurnId,
@@ -39,13 +40,16 @@ const makeThread = (
 const decide = (
   thread: OrchestrationThreadShell,
   pullRequest: SettlementPullRequest | null = null,
-  settings: { days?: number | null; merge?: boolean } = {},
+  settings: { days?: number | null; minutes?: number | null; merge?: boolean } = {},
 ) =>
   resolveAutoSettlementAt({
     thread,
     pullRequest,
     now: NOW,
-    autoSettleAfterDays: settings.days === undefined ? 3 : settings.days,
+    autoSettleAfterMinutes: resolveAutoSettleAfterMinutes({
+      sidebarAutoSettleAfterDays: settings.days === undefined ? 3 : settings.days,
+      sidebarAutoSettleAfterMinutes: settings.minutes ?? null,
+    }),
     autoSettleOnMerge: settings.merge ?? true,
   }) !== null;
 
@@ -65,7 +69,7 @@ describe("resolveAutoSettlementAt", () => {
         }),
         pullRequest: null,
         now: NOW,
-        autoSettleAfterDays: 3,
+        autoSettleAfterMinutes: 3 * 1440,
         autoSettleOnMerge: true,
       }),
     ).toBe("2026-08-21T00:00:00.000Z");
@@ -81,7 +85,7 @@ describe("resolveAutoSettlementAt", () => {
         }),
         pullRequest: { state: "closed", closedAt: NOW },
         now: NOW,
-        autoSettleAfterDays: null,
+        autoSettleAfterMinutes: null,
         autoSettleOnMerge: true,
       }),
     ).toBe("2026-08-01T00:00:00.000Z");
@@ -97,7 +101,7 @@ describe("resolveAutoSettlementAt", () => {
     expect(decide(makeThread({ latestUserMessageAt: "2026-08-25T12:00:00.000Z" }))).toBe(false);
   });
 
-  it("honours sub-day thresholds stored as fractional days", () => {
+  it("honours minute thresholds, which override whole days", () => {
     const completedAt = (at: string) =>
       makeThread({
         latestUserMessageAt: "2026-08-28T09:00:00.000Z",
@@ -110,12 +114,22 @@ describe("resolveAutoSettlementAt", () => {
           assistantMessageId: null,
         },
       });
-    const oneMinute = { days: 1 / 1440 };
+    const oneMinute = { minutes: 1 };
     expect(decide(completedAt("2026-08-28T11:58:59.000Z"), null, oneMinute)).toBe(true);
     expect(decide(completedAt("2026-08-28T11:59:30.000Z"), null, oneMinute)).toBe(false);
-    const oneHour = { days: 1 / 24 };
+    const oneHour = { minutes: 60 };
     expect(decide(completedAt("2026-08-28T10:59:00.000Z"), null, oneHour)).toBe(true);
     expect(decide(completedAt("2026-08-28T11:30:00.000Z"), null, oneHour)).toBe(false);
+    const ninetyMinutes = { minutes: 90 };
+    expect(decide(completedAt("2026-08-28T10:29:00.000Z"), null, ninetyMinutes)).toBe(true);
+    expect(decide(completedAt("2026-08-28T10:31:00.000Z"), null, ninetyMinutes)).toBe(false);
+    // Legacy whole days: the same 2.9-hour-old thread stays active under 3 days.
+    expect(decide(completedAt("2026-08-28T09:05:00.000Z"))).toBe(false);
+    expect(decide(completedAt("2026-08-28T09:05:00.000Z"), null, oneHour)).toBe(true);
+    // Days null turns inactivity settlement off even when minutes are set.
+    expect(decide(completedAt("2026-08-28T09:05:00.000Z"), null, { days: null, minutes: 1 })).toBe(
+      false,
+    );
   });
 
   it("settles inactive threads with open pull requests", () => {

@@ -23,6 +23,7 @@ import {
   type UsageLimitSourceConfig,
   ProviderDriverKind,
   ProviderInstanceId,
+  migrateSubDayAutoSettleSettings,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsError,
@@ -256,8 +257,14 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
 export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
   Layer.effect(ServerSettingsService, makeTest(overrides));
 
-const ServerSettingsJson = fromLenientJson(ServerSettings);
-const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
+const decodeLenientJsonExit = Schema.decodeUnknownExit(fromLenientJson(Schema.Unknown));
+const decodeServerSettingsValueExit = Schema.decodeUnknownExit(ServerSettings);
+const decodeServerSettingsJsonExit = (raw: string) => {
+  const parsed = decodeLenientJsonExit(raw);
+  return parsed._tag === "Failure"
+    ? parsed
+    : decodeServerSettingsValueExit(migrateSubDayAutoSettleSettings(parsed.value));
+};
 const PersistedOptionalProviderSettings = Schema.Struct({
   providers: Schema.optionalKey(
     Schema.Struct({

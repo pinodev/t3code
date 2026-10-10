@@ -461,3 +461,76 @@ describe("partial object patches at project scope", () => {
     });
   });
 });
+
+describe("auto-settle days and minutes as one setting", () => {
+  const withOverride = (override: ServerSettings["projectSettingsOverrides"][ProjectId]) =>
+    environment("Server", {
+      settings: {
+        sidebarAutoSettleAfterMinutes: 30,
+        projectSettingsOverrides: { [projectId]: override },
+      },
+    });
+
+  it("writes a sub-day threshold into the project's override entry", () => {
+    const plan = planScopedSettingsPatch(checkout, [laptop, server], {
+      sidebarAutoSettleAfterMinutes: 60,
+    });
+    expect(plan.serverWrites.map((write) => write.patch)).toEqual([
+      { projectSettingsOverrides: { [projectId]: { sidebarAutoSettleAfterMinutes: 60 } } },
+    ]);
+  });
+
+  it("treats a minutes-only project override as overriding the row", () => {
+    const targets = resolveScopedSettingsTargets(checkout, [
+      withOverride({ sidebarAutoSettleAfterMinutes: 60 }),
+    ]);
+    expect(scopedSettingsSource(targets, ["sidebarAutoSettleAfterDays"])).toBe("project");
+    expect(
+      listProjectOverrides(
+        [withOverride({ sidebarAutoSettleAfterMinutes: 60 })],
+        ["sidebarAutoSettleAfterDays"],
+      ),
+    ).toEqual([{ environmentId: server.environmentId, projectId }]);
+  });
+
+  it("resets both keys of the project override together", () => {
+    const overridden = withOverride({
+      sidebarAutoSettleAfterDays: 2,
+      sidebarAutoSettleAfterMinutes: 60,
+      defaultAutoPull: true,
+    });
+    expect(
+      planScopedSettingsClear(checkout, [overridden], ["sidebarAutoSettleAfterDays"])
+        .serverWrites[0]?.patch,
+    ).toEqual({ projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } } });
+    expect(
+      planProjectOverridesClear(
+        [overridden],
+        [{ environmentId: server.environmentId, projectId }],
+        ["sidebarAutoSettleAfterDays"],
+      ).serverWrites[0]?.patch,
+    ).toEqual({ projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } } });
+  });
+
+  it("compares the threshold the keys resolve to", () => {
+    const hourly = environment("Hourly", {
+      settings: { sidebarAutoSettleAfterDays: 1, sidebarAutoSettleAfterMinutes: 60 },
+    });
+    const daily = environment("Daily", { settings: { sidebarAutoSettleAfterDays: 1 } });
+    expect(
+      scopedSettingsAreMixed(resolveScopedSettingsTargets(all, [hourly, daily]), [
+        "sidebarAutoSettleAfterDays",
+      ]),
+    ).toBe(true);
+    // Project days beat the minutes the environment set, so both resolve to 2 days.
+    const pinned = resolveScopedSettingsTargets(checkout, [
+      withOverride({ sidebarAutoSettleAfterDays: 2 }),
+    ]);
+    const plain = [
+      { ...pinned[0]!, settings: { ...pinned[0]!.settings, sidebarAutoSettleAfterMinutes: null } },
+    ];
+    expect(scopedSettingsAreMixed([...pinned, ...plain], ["sidebarAutoSettleAfterDays"])).toBe(
+      false,
+    );
+  });
+});

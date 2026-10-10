@@ -10,8 +10,9 @@ import type {
 } from "@t3tools/contracts";
 import {
   type AutoSettleUnit,
+  autoSettleAfterMinutesPatch,
   DEFAULT_UNIFIED_SETTINGS,
-  joinAutoSettleAfterDays,
+  joinAutoSettleAfterMinutes,
 } from "@t3tools/contracts/settings";
 import {
   getBackgroundActivityBaseProfile,
@@ -311,16 +312,29 @@ export function backgroundActivityOverrideSettings(
 }
 
 /**
- * The auto-settle threshold a finished draft should save, or null to keep the current one.
- * Drafts are saved on blur or Enter, not per keystroke: typing "15" minutes would otherwise
- * save 1 minute first, long enough for a settle sweep to act on it.
+ * The auto-settle threshold in minutes a finished draft should save, or null to keep the
+ * current one. Drafts are saved on blur or Enter, not per keystroke: typing "15" minutes would
+ * otherwise save 1 minute first, long enough for a settle sweep to act on it.
  */
 export function resolveAutoSettleDraftCommit(
   draft: string,
   unit: AutoSettleUnit,
-  currentDays: number,
+  currentMinutes: number,
 ): number | null {
   // Number(), not parseInt: "3.5" must be rejected, not truncated to 3.
-  const days = draft.trim() === "" ? null : joinAutoSettleAfterDays(Number(draft), unit);
-  return days === null || days === currentDays ? null : days;
+  const minutes = draft.trim() === "" ? null : joinAutoSettleAfterMinutes(Number(draft), unit);
+  return minutes === null || minutes === currentMinutes ? null : minutes;
+}
+
+/**
+ * The settings patch for a finished auto-settle draft, or null to keep the current value.
+ * Whole days land in the days key (clearing minutes); finer values only touch minutes.
+ */
+export function resolveAutoSettleDraftPatch(
+  draft: string,
+  unit: AutoSettleUnit,
+  currentMinutes: number,
+): ReturnType<typeof autoSettleAfterMinutesPatch> | null {
+  const minutes = resolveAutoSettleDraftCommit(draft, unit, currentMinutes);
+  return minutes === null ? null : autoSettleAfterMinutesPatch(minutes);
 }

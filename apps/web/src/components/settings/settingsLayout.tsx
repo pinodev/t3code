@@ -27,6 +27,7 @@ import {
   listProjectOverrides,
   scopedSettingsAreMixed,
   scopedSettingsSource,
+  withLinkedSettingKeys,
 } from "./scopedSettings";
 import { useClearProjectOverrides, useClearScopedSettings } from "./useScopedSettings";
 import {
@@ -398,7 +399,7 @@ export function SettingsRow({
   // chain per target at every scope; client rows keep a plain status only.
   const customized =
     context !== null &&
-    settingKeys.some((key) =>
+    withLinkedSettingKeys(settingKeys).some((key) =>
       context.targets.some((candidate) => {
         const environmentSettings = environmentSettingsById.get(candidate.environmentId);
         return (

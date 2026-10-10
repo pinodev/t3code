@@ -331,6 +331,47 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     ).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("persists a minute threshold without writing fractional days", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+        const next = yield* serverSettings.updateSettings({ sidebarAutoSettleAfterMinutes: 60 });
+        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        const persisted = JSON.parse(raw) as Record<string, unknown>;
+
+        assert.strictEqual(next.sidebarAutoSettleAfterMinutes, 60);
+        assert.strictEqual(next.sidebarAutoSettleAfterDays, 3);
+        assert.strictEqual(persisted.sidebarAutoSettleAfterMinutes, 60);
+        // The days default stays implicit, so older servers read 3 whole days.
+        assert.isFalse("sidebarAutoSettleAfterDays" in persisted);
+      }),
+    ).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("loads a settings file whose days hold a sub-day threshold", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      // Written by the unreleased fractional-days build after a user typed 60 minutes.
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{ "sidebarAutoSettleAfterDays": 0.041666666666666664, "sidebarAutoSettleOnMerge": false }',
+      );
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.strictEqual(settings.sidebarAutoSettleAfterDays, 1);
+      assert.strictEqual(settings.sidebarAutoSettleAfterMinutes, 60);
+      // The rest of the file still applies instead of falling back to defaults.
+      assert.isFalse(settings.sidebarAutoSettleOnMerge);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("preserves model when switching providers via textGenerationModelSelection", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

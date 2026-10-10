@@ -70,13 +70,7 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 );
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
-const MINUTES_PER_DAY = 24 * 60;
-/**
- * The inactivity threshold stays stored in days so whole-day values from older
- * settings files decode unchanged; fractions express hours and minutes, down
- * to one minute.
- */
-export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 1 / MINUTES_PER_DAY;
+export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 1;
 export const MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 90;
 export const SidebarAutoSettleAfterDays = Schema.Number.check(
   Schema.isBetween({
@@ -87,42 +81,130 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
 const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 3;
 
+const MINUTES_PER_DAY = 24 * 60;
+export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_MINUTES = 1;
+export const MAX_SIDEBAR_AUTO_SETTLE_AFTER_MINUTES =
+  MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS * MINUTES_PER_DAY;
+/**
+ * A finer inactivity threshold beside the days key, which keeps its whole-day
+ * schema so older clients and servers still decode settings; they ignore this
+ * key and fall back to days. See `resolveAutoSettleAfterMinutes`.
+ */
+export const SidebarAutoSettleAfterMinutes = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_SIDEBAR_AUTO_SETTLE_AFTER_MINUTES,
+    maximum: MAX_SIDEBAR_AUTO_SETTLE_AFTER_MINUTES,
+  }),
+);
+export type SidebarAutoSettleAfterMinutes = typeof SidebarAutoSettleAfterMinutes.Type;
+
+type AutoSettleAfterSettings = {
+  readonly sidebarAutoSettleAfterDays?: number | null | undefined;
+  readonly sidebarAutoSettleAfterMinutes?: number | null | undefined;
+};
+
+/**
+ * Minutes of inactivity before a thread auto-settles, or null when that is off.
+ * Days `null` turns it off. Otherwise minutes, when set, overrides days, and
+ * unset minutes means the days value. Pass `minutesInherited` when days come
+ * from a project override but minutes from the environment: the more specific
+ * days value then wins over the inherited minutes.
+ */
+export function resolveAutoSettleAfterMinutes(
+  settings: AutoSettleAfterSettings,
+  minutesInherited = false,
+): number | null {
+  const days = settings.sidebarAutoSettleAfterDays;
+  if (days === null || days === undefined) return null;
+  const minutes = minutesInherited ? null : settings.sidebarAutoSettleAfterMinutes;
+  return minutes ?? Math.round(days * MINUTES_PER_DAY);
+}
+
+/**
+ * The settings patch that stores a threshold of `minutes`. Whole days go to the
+ * days key and clear minutes, so older readers see the exact value; anything
+ * finer goes to minutes and leaves days as it was, which older readers use.
+ */
+export function autoSettleAfterMinutesPatch(minutes: number): {
+  readonly sidebarAutoSettleAfterDays?: number;
+  readonly sidebarAutoSettleAfterMinutes: number | null;
+} {
+  return minutes % MINUTES_PER_DAY === 0
+    ? { sidebarAutoSettleAfterDays: minutes / MINUTES_PER_DAY, sidebarAutoSettleAfterMinutes: null }
+    : { sidebarAutoSettleAfterMinutes: minutes };
+}
+
 export const AUTO_SETTLE_UNIT_MINUTES = { minutes: 1, hours: 60, days: MINUTES_PER_DAY } as const;
 export type AutoSettleUnit = keyof typeof AUTO_SETTLE_UNIT_MINUTES;
 const AUTO_SETTLE_UNITS_LARGEST_FIRST: readonly AutoSettleUnit[] = ["days", "hours", "minutes"];
 
 /**
- * Splits a stored threshold into the amount and unit a settings form shows.
+ * Splits a threshold in minutes into the amount and unit a settings form shows.
  * Keeps `preferredUnit` while it still divides the threshold evenly, so typing
  * "24" hours does not flip the unit picker to days.
  */
-export function splitAutoSettleAfterDays(
-  days: number,
+export function splitAutoSettleAfterMinutes(
+  minutes: number,
   preferredUnit?: AutoSettleUnit,
 ): { readonly amount: number; readonly unit: AutoSettleUnit } {
-  const minutes = Math.max(1, Math.round(days * MINUTES_PER_DAY));
+  const whole = Math.max(1, Math.round(minutes));
   const unit =
-    preferredUnit !== undefined && minutes % AUTO_SETTLE_UNIT_MINUTES[preferredUnit] === 0
+    preferredUnit !== undefined && whole % AUTO_SETTLE_UNIT_MINUTES[preferredUnit] === 0
       ? preferredUnit
       : AUTO_SETTLE_UNITS_LARGEST_FIRST.find(
-          (candidate) => minutes % AUTO_SETTLE_UNIT_MINUTES[candidate] === 0,
+          (candidate) => whole % AUTO_SETTLE_UNIT_MINUTES[candidate] === 0,
         )!;
-  return { amount: minutes / AUTO_SETTLE_UNIT_MINUTES[unit], unit };
+  return { amount: whole / AUTO_SETTLE_UNIT_MINUTES[unit], unit };
 }
 
-/** The stored threshold for a whole `amount` of `unit`, or null when out of range. */
-export function joinAutoSettleAfterDays(amount: number, unit: AutoSettleUnit): number | null {
+/** The threshold in minutes for a whole `amount` of `unit`, or null when out of range. */
+export function joinAutoSettleAfterMinutes(amount: number, unit: AutoSettleUnit): number | null {
   if (!Number.isInteger(amount) || amount < 1) return null;
   const minutes = amount * AUTO_SETTLE_UNIT_MINUTES[unit];
-  return minutes <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS * MINUTES_PER_DAY
-    ? minutes / MINUTES_PER_DAY
-    : null;
+  return minutes <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_MINUTES ? minutes : null;
 }
 
 /** "1 hour", "90 minutes", "3 days". */
-export function formatAutoSettleAfterDays(days: number): string {
-  const { amount, unit } = splitAutoSettleAfterDays(days);
+export function formatAutoSettleAfterMinutes(minutes: number): string {
+  const { amount, unit } = splitAutoSettleAfterMinutes(minutes);
   return `${amount} ${amount === 1 ? unit.slice(0, -1) : unit}`;
+}
+
+/**
+ * Settings files written by the unreleased fractional-days build of this key
+ * can hold days below 1, which the days schema rejects. Moves such a value to
+ * minutes and leaves 1 day behind, at the top level and in project overrides;
+ * anything else passes through unchanged.
+ */
+export function migrateSubDayAutoSettleSettings(value: unknown): unknown {
+  const migrateScope = (scope: unknown): unknown => {
+    if (typeof scope !== "object" || scope === null || Array.isArray(scope)) return scope;
+    const record = scope as Record<string, unknown>;
+    const days = record["sidebarAutoSettleAfterDays"];
+    if (typeof days !== "number" || days >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS || days <= 0) {
+      return scope;
+    }
+    return {
+      ...record,
+      sidebarAutoSettleAfterDays: MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+      sidebarAutoSettleAfterMinutes:
+        record["sidebarAutoSettleAfterMinutes"] ?? Math.max(1, Math.round(days * MINUTES_PER_DAY)),
+    };
+  };
+  const migrated = migrateScope(value);
+  if (typeof migrated !== "object" || migrated === null || Array.isArray(migrated)) {
+    return migrated;
+  }
+  const overrides = (migrated as Record<string, unknown>)["projectSettingsOverrides"];
+  if (typeof overrides !== "object" || overrides === null || Array.isArray(overrides)) {
+    return migrated;
+  }
+  return {
+    ...migrated,
+    projectSettingsOverrides: Object.fromEntries(
+      Object.entries(overrides).map(([projectId, entry]) => [projectId, migrateScope(entry)]),
+    ),
+  };
 }
 export const MIN_GLASS_OPACITY = 40;
 export const MAX_GLASS_OPACITY = 100;
@@ -1081,6 +1163,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "pullRequestMergeMethod",
   "sidebarAutoSettleOnMerge",
   "sidebarAutoSettleAfterDays",
+  "sidebarAutoSettleAfterMinutes",
   "continueThreadsAfterServerUpdate",
   "responseStreamingMode",
 ] as const;
@@ -1106,6 +1189,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  sidebarAutoSettleAfterMinutes: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterMinutes)),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
@@ -1189,6 +1273,10 @@ export const ServerSettings = Schema.Struct({
   deviceHosts: SshDeviceHostConfigs.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
+  ),
+  /** Overrides days when set; `null` means the days value applies. */
+  sidebarAutoSettleAfterMinutes: Schema.NullOr(SidebarAutoSettleAfterMinutes).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
@@ -1484,6 +1572,7 @@ export const ServerSettingsPatch = Schema.Struct({
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  sidebarAutoSettleAfterMinutes: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterMinutes)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({

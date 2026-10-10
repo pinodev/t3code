@@ -17,6 +17,7 @@ import {
   hasChangedBackgroundActivitySettings,
   resolveBackgroundActivityProfileOption,
   resolveAutoSettleDraftCommit,
+  resolveAutoSettleDraftPatch,
 } from "./SettingsPanels.logic";
 
 describe("typography settings restore", () => {
@@ -267,17 +268,55 @@ describe("getChangedBrowserSettingLabels", () => {
 });
 
 describe("resolveAutoSettleDraftCommit", () => {
-  it("saves a finished draft in its unit", () => {
-    expect(resolveAutoSettleDraftCommit("15", "minutes", 3)).toBe(15 / 1440);
-    expect(resolveAutoSettleDraftCommit("1", "hours", 3)).toBe(1 / 24);
-    expect(resolveAutoSettleDraftCommit(" 2 ", "days", 3)).toBe(2);
+  const threeDays = 3 * 1440;
+
+  it("saves a finished draft as minutes in its unit", () => {
+    expect(resolveAutoSettleDraftCommit("15", "minutes", threeDays)).toBe(15);
+    expect(resolveAutoSettleDraftCommit("60", "minutes", threeDays)).toBe(60);
+    expect(resolveAutoSettleDraftCommit("1", "hours", threeDays)).toBe(60);
+    expect(resolveAutoSettleDraftCommit("90", "minutes", threeDays)).toBe(90);
+    expect(resolveAutoSettleDraftCommit(" 2 ", "days", threeDays)).toBe(2880);
   });
 
   it("keeps the current value for unchanged, empty, fractional or out-of-range drafts", () => {
-    expect(resolveAutoSettleDraftCommit("3", "days", 3)).toBeNull();
-    expect(resolveAutoSettleDraftCommit("", "minutes", 3)).toBeNull();
-    expect(resolveAutoSettleDraftCommit("3.5", "hours", 3)).toBeNull();
-    expect(resolveAutoSettleDraftCommit("0", "minutes", 3)).toBeNull();
-    expect(resolveAutoSettleDraftCommit("91", "days", 3)).toBeNull();
+    expect(resolveAutoSettleDraftCommit("3", "days", threeDays)).toBeNull();
+    expect(resolveAutoSettleDraftCommit("72", "hours", threeDays)).toBeNull();
+    expect(resolveAutoSettleDraftCommit("", "minutes", threeDays)).toBeNull();
+    expect(resolveAutoSettleDraftCommit("  ", "minutes", threeDays)).toBeNull();
+    expect(resolveAutoSettleDraftCommit("3.5", "hours", threeDays)).toBeNull();
+    expect(resolveAutoSettleDraftCommit("abc", "hours", threeDays)).toBeNull();
+    expect(resolveAutoSettleDraftCommit("0", "minutes", threeDays)).toBeNull();
+    expect(resolveAutoSettleDraftCommit("-5", "minutes", threeDays)).toBeNull();
+    expect(resolveAutoSettleDraftCommit("91", "days", threeDays)).toBeNull();
+    expect(resolveAutoSettleDraftCommit("129601", "minutes", threeDays)).toBeNull();
+  });
+});
+
+describe("resolveAutoSettleDraftPatch", () => {
+  const threeDays = 3 * 1440;
+
+  it("stores sub-day thresholds in minutes and leaves days untouched", () => {
+    expect(resolveAutoSettleDraftPatch("60", "minutes", threeDays)).toEqual({
+      sidebarAutoSettleAfterMinutes: 60,
+    });
+    expect(resolveAutoSettleDraftPatch("36", "hours", threeDays)).toEqual({
+      sidebarAutoSettleAfterMinutes: 2160,
+    });
+  });
+
+  it("stores whole days in the days key and clears minutes", () => {
+    expect(resolveAutoSettleDraftPatch("2", "days", threeDays)).toEqual({
+      sidebarAutoSettleAfterDays: 2,
+      sidebarAutoSettleAfterMinutes: null,
+    });
+    expect(resolveAutoSettleDraftPatch("48", "hours", 60)).toEqual({
+      sidebarAutoSettleAfterDays: 2,
+      sidebarAutoSettleAfterMinutes: null,
+    });
+  });
+
+  it("writes nothing when the draft does not change the threshold", () => {
+    expect(resolveAutoSettleDraftPatch("1", "hours", 60)).toBeNull();
+    expect(resolveAutoSettleDraftPatch("", "days", 60)).toBeNull();
   });
 });

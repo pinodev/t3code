@@ -43,10 +43,12 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
 import {
   type AutoSettleUnit,
+  autoSettleAfterMinutesPatch,
   DEFAULT_SERVER_SETTINGS,
-  formatAutoSettleAfterDays,
-  joinAutoSettleAfterDays,
-  splitAutoSettleAfterDays,
+  formatAutoSettleAfterMinutes,
+  joinAutoSettleAfterMinutes,
+  resolveAutoSettleAfterMinutes,
+  splitAutoSettleAfterMinutes,
 } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import {
@@ -60,7 +62,11 @@ import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
-import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
+import {
+  planAutoSettleSettingsSync,
+  resolveAutoSettleAmountPatch,
+  type AutoSettleSettings,
+} from "./autoSettleSettingsSync";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
@@ -653,30 +659,27 @@ function AutoSettleSettingsRows() {
     })),
   );
 
-  const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
-  const after = afterDays === null ? null : splitAutoSettleAfterDays(afterDays, preferredUnit);
+  const afterMinutes = resolveAutoSettleAfterMinutes(referenceSettings);
+  const after =
+    afterMinutes === null ? null : splitAutoSettleAfterMinutes(afterMinutes, preferredUnit);
   const commitAmount = () => {
-    const draft = (amountDraft ?? "").trim();
+    const draft = amountDraft ?? "";
     setAmountDraft(null);
-    if (after === null) return;
-    // Whole-string check so "3.5" and "3days" are rejected instead of
-    // silently becoming 3 on every eligible sync target.
-    const days = /^\d+$/.test(draft) ? joinAutoSettleAfterDays(Number(draft), after.unit) : null;
-    if (days !== null && days !== afterDays) {
-      writeToAll({ sidebarAutoSettleAfterDays: days });
-    }
+    if (after === null || afterMinutes === null) return;
+    const patch = resolveAutoSettleAmountPatch(draft, after.unit, afterMinutes);
+    if (patch !== null) writeToAll(patch);
   };
   // Keeps the amount and changes its unit; skips a unit where it is out of range.
   const cycleUnit = () => {
     if (after === null) return;
     let unit = NEXT_AUTO_SETTLE_UNIT[after.unit];
-    while (unit !== after.unit && joinAutoSettleAfterDays(after.amount, unit) === null) {
+    while (unit !== after.unit && joinAutoSettleAfterMinutes(after.amount, unit) === null) {
       unit = NEXT_AUTO_SETTLE_UNIT[unit];
     }
-    const days = joinAutoSettleAfterDays(after.amount, unit);
-    if (unit === after.unit || days === null) return;
+    const minutes = joinAutoSettleAfterMinutes(after.amount, unit);
+    if (unit === after.unit || minutes === null) return;
     setPreferredUnit(unit);
-    writeToAll({ sidebarAutoSettleAfterDays: days });
+    writeToAll(autoSettleAfterMinutesPatch(minutes));
   };
 
   return (
@@ -691,13 +694,18 @@ function AutoSettleSettingsRows() {
         icon="clock"
         label="Auto-settle inactive threads"
         subtitle={
-          afterDays === null
+          afterMinutes === null
             ? undefined
-            : `After ${formatAutoSettleAfterDays(afterDays)} without activity`
+            : `After ${formatAutoSettleAfterMinutes(afterMinutes)} without activity`
         }
-        value={afterDays !== null}
+        value={afterMinutes !== null}
         onValueChange={(value) =>
-          writeToAll({ sidebarAutoSettleAfterDays: value ? AUTO_SETTLE_DEFAULT_DAYS : null })
+          // Off is days null. Minutes is cleared either way, so turning on
+          // starts at whole days.
+          writeToAll({
+            sidebarAutoSettleAfterDays: value ? AUTO_SETTLE_DEFAULT_DAYS : null,
+            sidebarAutoSettleAfterMinutes: null,
+          })
         }
       />
       {after !== null ? (

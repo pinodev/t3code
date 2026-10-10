@@ -1,4 +1,8 @@
-import { CommandId, type ServerSettings as ServerSettingsValue } from "@t3tools/contracts";
+import {
+  CommandId,
+  resolveAutoSettleAfterMinutes,
+  type ServerSettings as ServerSettingsValue,
+} from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -52,6 +56,7 @@ export function autoSettlementSettingsKey(settings: ServerSettingsValue): string
   return JSON.stringify([
     settings.sidebarAutoSettleOnMerge,
     settings.sidebarAutoSettleAfterDays,
+    settings.sidebarAutoSettleAfterMinutes,
     // Only entries that touch settlement, in a stable order, so a project
     // override on an unrelated key does not queue a sweep. JSON drops
     // undefined, so inherit (absent) and never (null) need distinct marks.
@@ -59,7 +64,8 @@ export function autoSettlementSettingsKey(settings: ServerSettingsValue): string
       .filter(
         ([, entry]) =>
           entry.sidebarAutoSettleOnMerge !== undefined ||
-          entry.sidebarAutoSettleAfterDays !== undefined,
+          entry.sidebarAutoSettleAfterDays !== undefined ||
+          entry.sidebarAutoSettleAfterMinutes !== undefined,
       )
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([projectId, entry]) => [
@@ -68,6 +74,9 @@ export function autoSettlementSettingsKey(settings: ServerSettingsValue): string
         entry.sidebarAutoSettleAfterDays === undefined
           ? "inherit"
           : entry.sidebarAutoSettleAfterDays,
+        entry.sidebarAutoSettleAfterMinutes === undefined
+          ? "inherit"
+          : entry.sidebarAutoSettleAfterMinutes,
       ]),
   ]);
 }
@@ -100,16 +109,21 @@ export const make = Effect.gen(function* () {
     // dispatch skips it for this snapshot instead of retrying through a lookup.
     const settleThread = Effect.fn("ThreadSettlementReactor.settleThread")(
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
-        const settings = resolveProjectSettings(
+        const resolved = resolveProjectSettings(
           yield* settingsService.getSettings,
           thread.projectId,
-        ).settings;
+        );
+        const settings = resolved.settings;
         const decisionNow = DateTime.formatIso(yield* DateTime.now);
         const settledAt = resolveAutoSettlementAt({
           thread,
           pullRequest,
           now: decisionNow,
-          autoSettleAfterDays: settings.sidebarAutoSettleAfterDays,
+          autoSettleAfterMinutes: resolveAutoSettleAfterMinutes(
+            settings,
+            resolved.sources.sidebarAutoSettleAfterDays === "project" &&
+              resolved.sources.sidebarAutoSettleAfterMinutes !== "project",
+          ),
           autoSettleOnMerge: settings.sidebarAutoSettleOnMerge,
         });
         if (settledAt === null) {

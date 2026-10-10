@@ -1,9 +1,12 @@
 import {
   DEFAULT_SERVER_SETTINGS,
-  formatAutoSettleAfterDays,
+  formatAutoSettleAfterMinutes,
+  type ProjectId,
+  resolveAutoSettleAfterMinutes,
   resolveEnvironmentMachineKind,
   type ServerSettings,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { CheckIcon, LayersIcon } from "lucide-react";
 import * as Equal from "effect/Equal";
 
@@ -16,7 +19,11 @@ import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ProjectOverrideEntry, ScopedSettingsTarget } from "./scopedSettings";
-import { isProjectScopedSettingKey } from "./scopedSettings";
+import {
+  autoSettleMinutesInherited,
+  isProjectScopedSettingKey,
+  projectSettingSourceFor,
+} from "./scopedSettings";
 
 interface InheritanceLayer {
   readonly key: "project" | "environment" | "built-in";
@@ -47,7 +54,9 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
   }
   if (typeof value === "boolean") return value ? "On" : "Off";
   if (typeof value === "number") {
-    return key === "sidebarAutoSettleAfterDays" ? formatAutoSettleAfterDays(value) : String(value);
+    return key === "sidebarAutoSettleAfterDays"
+      ? formatAutoSettleAfterMinutes(value)
+      : String(value);
   }
   if (typeof value === "string") {
     if (key === "defaultThreadEnvMode" && (value === "local" || value === "worktree")) {
@@ -71,6 +80,35 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
 }
 
 /**
+ * The value the chain shows for `key`. The auto-settle row stands for both its
+ * days and minutes keys, so it shows the threshold they resolve to.
+ */
+function displayedValue(
+  settings: ServerSettings,
+  key: keyof ServerSettings,
+  minutesInherited = false,
+): unknown {
+  return key === "sidebarAutoSettleAfterDays"
+    ? resolveAutoSettleAfterMinutes(settings, minutesInherited)
+    : settings[key];
+}
+
+/** The value a project override gives `key` on its environment. */
+function projectOverrideValue(
+  environmentSettings: ServerSettings,
+  projectId: ProjectId,
+  key: keyof ServerSettings,
+): unknown {
+  if (key !== "sidebarAutoSettleAfterDays") {
+    return isProjectScopedSettingKey(key)
+      ? environmentSettings.projectSettingsOverrides[projectId]?.[key]
+      : undefined;
+  }
+  const resolved = resolveProjectSettings(environmentSettings, projectId);
+  return displayedValue(resolved.settings, key, autoSettleMinutesInherited(resolved.sources));
+}
+
+/**
  * The layers a setting resolves through for one target, top-down: the
  * project override when the target is a project, the environment's value,
  * and the built-in default. The first layer that is set wins.
@@ -80,16 +118,24 @@ export function settingInheritanceLayers(
   environmentSettings: ServerSettings,
   key: keyof ServerSettings,
 ): readonly InheritanceLayer[] {
-  const builtIn = DEFAULT_SERVER_SETTINGS[key];
-  const environmentValue = environmentSettings[key];
-  const projectSource = isProjectScopedSettingKey(key) ? target.sources[key] : "environment";
+  const builtIn = displayedValue(DEFAULT_SERVER_SETTINGS, key);
+  const environmentValue = displayedValue(environmentSettings, key);
+  const projectSource = isProjectScopedSettingKey(key)
+    ? projectSettingSourceFor(target.sources, key)
+    : "environment";
   const environmentSet = !Equal.equals(environmentValue, builtIn);
   const layers: InheritanceLayer[] = [];
   if (target.projectId !== null && isProjectScopedSettingKey(key)) {
     layers.push({
       key: "project",
       label: "Project",
-      value: projectSource === "project" ? formatValue(key, target.settings[key]) : "Inherits",
+      value:
+        projectSource === "project"
+          ? formatValue(
+              key,
+              displayedValue(target.settings, key, autoSettleMinutesInherited(target.sources)),
+            )
+          : "Inherits",
       effective: projectSource === "project",
       set: projectSource === "project",
     });
@@ -254,7 +300,7 @@ export function SettingInheritance({
                   (project) => project.environmentId === target.environmentId,
                 );
                 if (overriding.length === 0) return null;
-                const overrides = environment.serverConfig.settings.projectSettingsOverrides;
+                const environmentSettings = environment.serverConfig.settings;
                 return (
                   <div className="mt-2 border-t border-border/60 pt-2">
                     <div className="flex items-center justify-between gap-3 px-2 text-xs text-muted-foreground">
@@ -284,7 +330,10 @@ export function SettingInheritance({
                           </button>
                           <span className="max-w-32 truncate text-muted-foreground tabular-nums">
                             {isProjectScopedSettingKey(key)
-                              ? formatValue(key, overrides[project.projectId]?.[key])
+                              ? formatValue(
+                                  key,
+                                  projectOverrideValue(environmentSettings, project.projectId, key),
+                                )
                               : null}
                           </span>
                         </li>

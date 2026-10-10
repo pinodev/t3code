@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 
 import { ProjectId } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -7,14 +8,18 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   ClaudeSettings,
+  autoSettleAfterMinutesPatch,
   DEFAULT_SERVER_SETTINGS,
-  formatAutoSettleAfterDays,
-  joinAutoSettleAfterDays,
+  formatAutoSettleAfterMinutes,
+  joinAutoSettleAfterMinutes,
+  migrateSubDayAutoSettleSettings,
   nextGlobalFilterName,
+  ProjectSettingsOverrides,
+  resolveAutoSettleAfterMinutes,
   resolveGlobalFilters,
   resolveProviderInstanceEnabled,
   ServerSettings,
-  splitAutoSettleAfterDays,
+  splitAutoSettleAfterMinutes,
   ServerSettingsPatch,
 } from "./settings.ts";
 
@@ -664,65 +669,150 @@ describe("ServerSettings thread settlement", () => {
     ).toMatchObject({ sidebarAutoSettleAfterDays: null, sidebarAutoSettleOnMerge: false });
   });
 
-  it.each([-1, 0, 1 / 2880, 91])(
-    "rejects an auto-settle threshold outside one minute..90 days: %s",
-    (value) => {
-      expect(() => decodeServerSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
-      expect(() => decodeServerSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
-    },
-  );
+  it.each([-1, 0, 1 / 24, 91])("keeps the days key whole-day compatible: rejects %s", (value) => {
+    expect(() => decodeServerSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
+    expect(() => decodeServerSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
+  });
 
-  it("decodes legacy whole-day thresholds unchanged and accepts minute thresholds", () => {
-    expect(decodeServerSettings({ sidebarAutoSettleAfterDays: 7 }).sidebarAutoSettleAfterDays).toBe(
-      7,
+  it.each([0, 1.5, 90 * 1440 + 1])("rejects a minutes threshold outside 1..129600: %s", (value) => {
+    expect(() => decodeServerSettings({ sidebarAutoSettleAfterMinutes: value })).toThrow();
+    expect(() => decodeServerSettingsPatch({ sidebarAutoSettleAfterMinutes: value })).toThrow();
+  });
+
+  it("decodes settings saved before the minutes key as the days value", () => {
+    const settings = decodeServerSettings({ sidebarAutoSettleAfterDays: 7 });
+    expect(settings.sidebarAutoSettleAfterDays).toBe(7);
+    expect(settings.sidebarAutoSettleAfterMinutes).toBeNull();
+    expect(resolveAutoSettleAfterMinutes(settings)).toBe(7 * 1440);
+    expect(resolveAutoSettleAfterMinutes(decodeServerSettings({}))).toBe(3 * 1440);
+  });
+
+  it("decodes minute thresholds next to days, also as project overrides", () => {
+    const settings = decodeServerSettings({
+      sidebarAutoSettleAfterDays: 3,
+      sidebarAutoSettleAfterMinutes: 60,
+      projectSettingsOverrides: { project: { sidebarAutoSettleAfterMinutes: 90 } },
+    });
+    expect(resolveAutoSettleAfterMinutes(settings)).toBe(60);
+    expect(
+      settings.projectSettingsOverrides[ProjectId.make("project")]?.sidebarAutoSettleAfterMinutes,
+    ).toBe(90);
+    // Unset is the default, which the sparse settings.json writer drops.
+    expect(DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterMinutes).toBeNull();
+  });
+
+  it("stays readable by a schema that predates the minutes key", () => {
+    // What a pre-v7 client or server decodes: the same structs without the key.
+    const OldServerSettings = ServerSettings.mapFields(
+      Struct.omit(["sidebarAutoSettleAfterMinutes"]),
     );
-    for (const [amount, unit] of [
-      [1, "minutes"],
-      [1, "hours"],
-    ] as const) {
-      const days = joinAutoSettleAfterDays(amount, unit)!;
+    const OldProjectSettingsOverrides = ProjectSettingsOverrides.mapFields(
+      Struct.omit(["sidebarAutoSettleAfterMinutes"]),
+    );
+    const saved = encodeServerSettings(
+      decodeServerSettings({ sidebarAutoSettleAfterDays: 3, sidebarAutoSettleAfterMinutes: 60 }),
+    );
+    const old = Schema.decodeUnknownSync(OldServerSettings)(saved);
+    expect(old.sidebarAutoSettleAfterDays).toBe(3);
+    expect(old).not.toHaveProperty("sidebarAutoSettleAfterMinutes");
+    expect(
+      Schema.decodeUnknownSync(OldProjectSettingsOverrides)({
+        sidebarAutoSettleAfterDays: 1,
+        sidebarAutoSettleAfterMinutes: 90,
+      }),
+    ).toEqual({ sidebarAutoSettleAfterDays: 1 });
+  });
+
+  it("resolves precedence: days null is off, minutes override days, inherited minutes yield", () => {
+    expect(
+      resolveAutoSettleAfterMinutes({
+        sidebarAutoSettleAfterDays: null,
+        sidebarAutoSettleAfterMinutes: 60,
+      }),
+    ).toBeNull();
+    expect(
+      resolveAutoSettleAfterMinutes({
+        sidebarAutoSettleAfterDays: 3,
+        sidebarAutoSettleAfterMinutes: 90,
+      }),
+    ).toBe(90);
+    expect(
+      resolveAutoSettleAfterMinutes(
+        { sidebarAutoSettleAfterDays: 1, sidebarAutoSettleAfterMinutes: 60 },
+        true,
+      ),
+    ).toBe(1440);
+  });
+
+  it("writes whole days to the days key and anything finer to minutes only", () => {
+    // A user who typed 60 minutes: days keep their whole value for older readers.
+    expect(autoSettleAfterMinutesPatch(60)).toEqual({ sidebarAutoSettleAfterMinutes: 60 });
+    expect(autoSettleAfterMinutesPatch(90)).toEqual({ sidebarAutoSettleAfterMinutes: 90 });
+    expect(autoSettleAfterMinutesPatch(2 * 1440)).toEqual({
+      sidebarAutoSettleAfterDays: 2,
+      sidebarAutoSettleAfterMinutes: null,
+    });
+    for (const minutes of [1, 60, 90, 1441, 2 * 1440]) {
+      const days = autoSettleAfterMinutesPatch(minutes).sidebarAutoSettleAfterDays;
+      if (days !== undefined) expect(Number.isInteger(days)).toBe(true);
       expect(
-        decodeServerSettings({ sidebarAutoSettleAfterDays: days }).sidebarAutoSettleAfterDays,
-      ).toBe(days);
-      expect(
-        decodeServerSettings({
-          projectSettingsOverrides: { project: { sidebarAutoSettleAfterDays: days } },
-        }).projectSettingsOverrides[ProjectId.make("project")]?.sidebarAutoSettleAfterDays,
-      ).toBe(days);
+        resolveAutoSettleAfterMinutes({
+          sidebarAutoSettleAfterDays: 3,
+          ...autoSettleAfterMinutesPatch(minutes),
+        }),
+      ).toBe(minutes);
     }
+  });
+
+  it("migrates a sub-day value saved as fractional days to minutes", () => {
+    // A user who typed 60 minutes into the unreleased fractional-days build.
+    const migrated = migrateSubDayAutoSettleSettings({
+      sidebarAutoSettleAfterDays: 1 / 24,
+      projectSettingsOverrides: {
+        project: { sidebarAutoSettleAfterDays: 1 / 1440 },
+        other: { sidebarAutoSettleAfterDays: 2 },
+      },
+    });
+    const settings = decodeServerSettings(migrated);
+    expect(settings.sidebarAutoSettleAfterDays).toBe(1);
+    expect(settings.sidebarAutoSettleAfterMinutes).toBe(60);
+    expect(resolveAutoSettleAfterMinutes(settings)).toBe(60);
+    expect(settings.projectSettingsOverrides[ProjectId.make("project")]).toEqual({
+      sidebarAutoSettleAfterDays: 1,
+      sidebarAutoSettleAfterMinutes: 1,
+    });
+    expect(settings.projectSettingsOverrides[ProjectId.make("other")]).toEqual({
+      sidebarAutoSettleAfterDays: 2,
+    });
+    // Values every schema accepts pass through untouched.
+    const legacy = { sidebarAutoSettleAfterDays: 1.5, sidebarAutoSettleAfterMinutes: null };
+    expect(migrateSubDayAutoSettleSettings(legacy)).toBe(legacy);
   });
 });
 
 describe("auto-settle threshold units", () => {
-  it("round-trips amounts through the stored day value", () => {
-    expect(splitAutoSettleAfterDays(3)).toEqual({ amount: 3, unit: "days" });
-    expect(splitAutoSettleAfterDays(joinAutoSettleAfterDays(1, "hours")!)).toEqual({
-      amount: 1,
-      unit: "hours",
-    });
-    expect(splitAutoSettleAfterDays(joinAutoSettleAfterDays(90, "minutes")!)).toEqual({
-      amount: 90,
-      unit: "minutes",
-    });
-    expect(splitAutoSettleAfterDays(1, "hours")).toEqual({ amount: 24, unit: "hours" });
-    expect(splitAutoSettleAfterDays(joinAutoSettleAfterDays(90, "minutes")!, "hours")).toEqual({
-      amount: 90,
-      unit: "minutes",
-    });
+  it("splits minutes into the largest even unit, keeping a preferred one", () => {
+    expect(splitAutoSettleAfterMinutes(3 * 1440)).toEqual({ amount: 3, unit: "days" });
+    expect(splitAutoSettleAfterMinutes(60)).toEqual({ amount: 1, unit: "hours" });
+    expect(splitAutoSettleAfterMinutes(90)).toEqual({ amount: 90, unit: "minutes" });
+    expect(splitAutoSettleAfterMinutes(1440, "hours")).toEqual({ amount: 24, unit: "hours" });
+    expect(splitAutoSettleAfterMinutes(90, "hours")).toEqual({ amount: 90, unit: "minutes" });
   });
 
   it("rejects partial, zero and out-of-range amounts", () => {
-    expect(joinAutoSettleAfterDays(0, "minutes")).toBeNull();
-    expect(joinAutoSettleAfterDays(1.5, "hours")).toBeNull();
-    expect(joinAutoSettleAfterDays(91, "days")).toBeNull();
-    expect(joinAutoSettleAfterDays(90 * 24, "hours")).toBe(90);
+    expect(joinAutoSettleAfterMinutes(0, "minutes")).toBeNull();
+    expect(joinAutoSettleAfterMinutes(1.5, "hours")).toBeNull();
+    expect(joinAutoSettleAfterMinutes(91, "days")).toBeNull();
+    expect(joinAutoSettleAfterMinutes(90 * 24, "hours")).toBe(90 * 1440);
+    expect(joinAutoSettleAfterMinutes(60, "minutes")).toBe(60);
   });
 
   it("formats thresholds with singular and plural units", () => {
-    expect(formatAutoSettleAfterDays(1)).toBe("1 day");
-    expect(formatAutoSettleAfterDays(3)).toBe("3 days");
-    expect(formatAutoSettleAfterDays(joinAutoSettleAfterDays(1, "hours")!)).toBe("1 hour");
-    expect(formatAutoSettleAfterDays(joinAutoSettleAfterDays(1, "minutes")!)).toBe("1 minute");
+    expect(formatAutoSettleAfterMinutes(1440)).toBe("1 day");
+    expect(formatAutoSettleAfterMinutes(3 * 1440)).toBe("3 days");
+    expect(formatAutoSettleAfterMinutes(60)).toBe("1 hour");
+    expect(formatAutoSettleAfterMinutes(1)).toBe("1 minute");
+    expect(formatAutoSettleAfterMinutes(90)).toBe("90 minutes");
   });
 });
 

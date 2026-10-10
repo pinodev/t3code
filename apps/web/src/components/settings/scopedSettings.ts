@@ -6,6 +6,7 @@ import {
   type ProjectId,
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
+  resolveAutoSettleAfterMinutes,
   ServerSettings,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
@@ -39,6 +40,66 @@ const PROJECT_SCOPED_KEYS = new Set<string>(PROJECT_SCOPED_SERVER_SETTING_KEYS);
 
 export function isProjectScopedSettingKey(key: string): key is ProjectScopedServerSettingKey {
   return PROJECT_SCOPED_KEYS.has(key);
+}
+
+/**
+ * Keys stored beside another key as one setting. The auto-settle minutes key
+ * refines the days key, so rows name only the days key; its source, mixed
+ * state, override list and reset all cover the minutes key too.
+ */
+const LINKED_SETTING_KEYS: Partial<
+  Record<ProjectScopedServerSettingKey, readonly ProjectScopedServerSettingKey[]>
+> = {
+  sidebarAutoSettleAfterDays: ["sidebarAutoSettleAfterMinutes"],
+};
+
+/** `keys` plus the keys stored with them as the same setting. */
+export function withLinkedSettingKeys<K extends keyof ServerSettings>(
+  keys: readonly K[],
+): readonly (K | ProjectScopedServerSettingKey)[] {
+  const linked = keys.flatMap((key) =>
+    isProjectScopedSettingKey(key) ? (LINKED_SETTING_KEYS[key] ?? []) : [],
+  );
+  return linked.length === 0 ? keys : [...new Set([...keys, ...linked])];
+}
+
+/** Where a key's value comes from; a key counts as overridden when a linked key is. */
+export function projectSettingSourceFor(
+  sources: ScopedSettingsTarget["sources"],
+  key: ProjectScopedServerSettingKey,
+): ProjectSettingSource {
+  return [key, ...(LINKED_SETTING_KEYS[key] ?? [])].some((linked) => sources[linked] === "project")
+    ? "project"
+    : "environment";
+}
+
+/**
+ * True when a target's auto-settle days come from its project override but the
+ * minutes key is inherited from the environment; days then win.
+ */
+export function autoSettleMinutesInherited(
+  sources: Pick<
+    ScopedSettingsTarget["sources"],
+    "sidebarAutoSettleAfterDays" | "sidebarAutoSettleAfterMinutes"
+  >,
+): boolean {
+  return (
+    sources.sidebarAutoSettleAfterDays === "project" &&
+    sources.sidebarAutoSettleAfterMinutes !== "project"
+  );
+}
+
+/** The value a row shows and compares for `key`; auto-settle compares its resolved minutes. */
+function comparableSettingValue(
+  target: Pick<ScopedSettingsTarget, "settings"> & Partial<Pick<ScopedSettingsTarget, "sources">>,
+  key: keyof ServerSettings,
+): unknown {
+  return key === "sidebarAutoSettleAfterDays"
+    ? resolveAutoSettleAfterMinutes(
+        target.settings,
+        target.sources ? autoSettleMinutesInherited(target.sources) : false,
+      )
+    : target.settings[key];
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -120,14 +181,18 @@ export function resolveScopedSettingsTargets(
 }
 
 export function scopedSettingsAreMixed(
-  targets: readonly Pick<ScopedSettingsTarget, "settings">[],
+  targets: readonly (Pick<ScopedSettingsTarget, "settings"> &
+    Partial<Pick<ScopedSettingsTarget, "sources">>)[],
   keys: readonly (keyof ServerSettings)[],
 ): boolean {
   const first = targets[0];
   return (
     first !== undefined &&
     targets.some((candidate) =>
-      keys.some((key) => !Equal.equals(first.settings[key], candidate.settings[key])),
+      keys.some(
+        (key) =>
+          !Equal.equals(comparableSettingValue(first, key), comparableSettingValue(candidate, key)),
+      ),
     )
   );
 }
@@ -141,7 +206,9 @@ export function scopedSettingsSource(
 ): ScopedSettingSource {
   const scoped = keys.filter(isProjectScopedSettingKey);
   if (scoped.length === 0 || targets.length === 0) return "environment";
-  const sources = new Set(targets.flatMap((target) => scoped.map((key) => target.sources[key])));
+  const sources = new Set(
+    targets.flatMap((target) => scoped.map((key) => projectSettingSourceFor(target.sources, key))),
+  );
   return sources.size > 1 ? "mixed" : sources.has("project") ? "project" : "environment";
 }
 
@@ -255,8 +322,9 @@ export function planScopedSettingsPatch(
 export function planScopedSettingsClear(
   scope: ResolvedSettingsScope,
   environments: readonly ScopedSettingsEnvironment[],
-  keys: readonly ProjectScopedServerSettingKey[],
+  settingKeys: readonly ProjectScopedServerSettingKey[],
 ) {
+  const keys = withLinkedSettingKeys(settingKeys);
   const serverWrites =
     scope.kind === "project" || scope.kind === "checkout"
       ? projectOverrideWrites(scope, environments, (_current, settings, projectId) =>
@@ -288,7 +356,7 @@ export function listProjectOverrides(
   environments: readonly ScopedSettingsEnvironment[],
   keys: readonly (keyof ServerSettings)[],
 ): readonly ProjectOverrideEntry[] {
-  const scoped = keys.filter(isProjectScopedSettingKey);
+  const scoped = withLinkedSettingKeys(keys).filter(isProjectScopedSettingKey);
   if (scoped.length === 0) return [];
   return environments.flatMap((environment) => {
     const overrides = environment.serverConfig?.settings.projectSettingsOverrides;
@@ -305,8 +373,9 @@ export function listProjectOverrides(
 export function planProjectOverridesClear(
   environments: readonly ScopedSettingsEnvironment[],
   entries: readonly ProjectOverrideEntry[],
-  keys: readonly ProjectScopedServerSettingKey[],
+  settingKeys: readonly ProjectScopedServerSettingKey[],
 ) {
+  const keys = withLinkedSettingKeys(settingKeys);
   const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
   const writes = new Map<EnvironmentId, ScopedServerWrite>();
   for (const { environmentId, projectId } of entries) {

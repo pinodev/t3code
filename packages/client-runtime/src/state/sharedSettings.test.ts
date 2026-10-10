@@ -126,6 +126,7 @@ describe("pickSharedServerSettings", () => {
       "continueThreadsAfterServerUpdate",
       "newWorktreesStartFromOrigin",
       "sidebarAutoSettleAfterDays",
+      "sidebarAutoSettleAfterMinutes",
       "sidebarAutoSettleOnMerge",
       "sourceControlWritingStyle",
       "textGenerationModelSelection",

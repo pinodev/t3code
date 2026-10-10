@@ -568,6 +568,51 @@ describe("ThreadSettlementReactor", () => {
     ),
   );
 
+  it.effect("environment minutes settle after an hour unless a project sets its own days", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const daysProject = ProjectId.make("days-project");
+        const twoHoursIdle = {
+          latestUserMessageAt: "2026-08-28T10:00:00.000Z",
+          latestTurn: null,
+          updatedAt: "2026-08-28T10:00:00.000Z",
+        };
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(
+            [
+              makeThread("minutes-thread", twoHoursIdle),
+              makeThread("days-thread", { ...twoHoursIdle, projectId: daysProject }),
+            ],
+            [makeProject(), makeProject(daysProject, "/workspace/days")],
+          ),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: 3,
+            sidebarAutoSettleAfterMinutes: 60,
+            sidebarAutoSettleOnMerge: false,
+            // Written by a client that only knows days: the project's own days
+            // value outranks the minutes it would otherwise inherit.
+            projectSettingsOverrides: { [daysProject]: { sidebarAutoSettleAfterDays: 1 } },
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* reactor.start();
+          yield* Queue.take(fixture.settingsReads);
+          yield* Deferred.succeed(fixture.activation, undefined);
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [ThreadId.make("minutes-thread")],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("starts without clients and skips protected threads before pull request lookup", () =>
     Effect.scoped(
       Effect.gen(function* () {
