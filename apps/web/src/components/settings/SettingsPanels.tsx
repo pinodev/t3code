@@ -165,6 +165,7 @@ import {
   normalizeIntervalSeconds,
   PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
   hasChangedBackgroundActivitySettings,
+  resolveAutoSettleDraftCommit,
   resolveBackgroundActivityProfileOption,
 } from "./SettingsPanels.logic";
 import {
@@ -1967,9 +1968,9 @@ function AutoSettleAfterInput({
   value: number;
   onCommit: (days: number) => void;
 }) {
-  // Local draft so the field can be emptied mid-edit; the setting only moves
-  // on valid input and snaps back to the persisted value on blur. The unit is
-  // local too, so "24 hours" stays in hours instead of turning into "1 day".
+  // Local draft, saved on blur or Enter (Escape discards it); invalid drafts
+  // snap back to the persisted value. The unit is local too, so "24 hours"
+  // stays in hours instead of turning into "1 day".
   const [preferredUnit, setPreferredUnit] = useState(() => splitAutoSettleAfterDays(value).unit);
   const { amount, unit } = splitAutoSettleAfterDays(value, preferredUnit);
   const [draft, setDraft] = useState(String(amount));
@@ -1989,15 +1990,21 @@ function AutoSettleAfterInput({
         }
         className="w-full sm:w-24"
         value={draft}
-        onChange={(event) => {
-          setDraft(event.target.value);
-          // Number(), not parseInt: "3.5" must be rejected (not truncated to a
-          // committed 3 while the field shows 3.5) — commit only when the
-          // persisted value matches the displayed one.
-          const days = joinAutoSettleAfterDays(Number(event.target.value), unit);
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          const days = resolveAutoSettleDraftCommit(draft, unit, value);
           if (days !== null) onCommit(days);
+          else setDraft(String(amount));
         }}
-        onBlur={() => setDraft(String(amount))}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") {
+            // Discard the draft without closing the settings page.
+            event.preventDefault();
+            event.stopPropagation();
+            setDraft(String(amount));
+          }
+        }}
         aria-label="Inactivity before auto-settle"
       />
       <Select

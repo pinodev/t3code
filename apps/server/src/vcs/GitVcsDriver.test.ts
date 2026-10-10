@@ -176,6 +176,73 @@ it.effect("captures the worktree, not staged content, when seeding from the real
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
+it.effect("captures edits to assume-unchanged files without clearing the real flag", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-assume-unchanged-" });
+    yield* runGit(cwd, ["init"]);
+    yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
+    yield* runGit(cwd, ["config", "user.name", "Test"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "local.txt"), "head\n");
+    yield* runGit(cwd, ["add", "."]);
+    yield* runGit(cwd, ["commit", "-m", "initial"]);
+    yield* runGit(cwd, ["update-index", "--assume-unchanged", "local.txt"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "local.txt"), "edited\n");
+
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/assume-unchanged");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    const captured = yield* driver.execute({
+      operation: "test",
+      cwd,
+      args: ["show", `${checkpointRef}:local.txt`],
+    });
+    assert.strictEqual(captured.stdout, "edited\n");
+    const flags = yield* driver.execute({
+      operation: "test",
+      cwd,
+      args: ["ls-files", "-v", "local.txt"],
+    });
+    assert.strictEqual(flags.stdout.trim(), "h local.txt");
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+it.effect("captures racily clean edits made in the same instant as the index write", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-racy-checkpoint-" });
+    yield* runGit(cwd, ["init"]);
+    yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
+    yield* runGit(cwd, ["config", "user.name", "Test"]);
+    yield* runGit(cwd, ["config", "core.trustctime", "false"]);
+    const filePath = path.join(cwd, "racy.txt");
+    const instant = 1_577_836_800; // 2020-01-01, in the epoch seconds fs.utimes takes
+    yield* fileSystem.writeFileString(filePath, "aaaa\n");
+    yield* fileSystem.utimes(filePath, instant, instant);
+    yield* runGit(cwd, ["add", "."]);
+    yield* runGit(cwd, ["commit", "-m", "initial"]);
+    // Same size, same mtime as the index entry and the index itself: only git's racy check,
+    // which compares entry mtimes against the index file's mtime, can see this edit.
+    yield* fileSystem.writeFileString(filePath, "bbbb\n");
+    yield* fileSystem.utimes(filePath, instant, instant);
+    yield* fileSystem.utimes(path.join(cwd, ".git", "index"), instant, instant);
+
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/racy");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    const captured = yield* driver.execute({
+      operation: "test",
+      cwd,
+      args: ["show", `${checkpointRef}:racy.txt`],
+    });
+    assert.strictEqual(captured.stdout, "bbbb\n");
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
 it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
   let observedEnv: NodeJS.ProcessEnv | undefined;
   let observedAppendTruncationMarker: boolean | undefined;

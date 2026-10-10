@@ -749,7 +749,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
     });
 
-  const seedTempIndexFromWorktreeIndex = (cwd: string, tempIndexPath: string) =>
+  const seedTempIndexFromWorktreeIndex = (
+    cwd: string,
+    tempIndexPath: string,
+    tempIndexEnv: NodeJS.ProcessEnv,
+  ) =>
     Effect.gen(function* () {
       const result = yield* execute({
         operation: "GitVcsDriver.checkpoints.resolveWorktreeIndex",
@@ -765,12 +769,45 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return false;
       }
       const resolvedIndexPath = path.resolve(cwd, indexPath.trim());
-      if (!(yield* fileSystem.exists(resolvedIndexPath))) {
-        return false;
-      }
+      const indexInfo = yield* fileSystem.stat(resolvedIndexPath);
       yield* fileSystem.copyFile(resolvedIndexPath, tempIndexPath);
+      // Git trusts an entry's stat data only when it predates the index file, so the copy keeps
+      // the original's mtime (some platforms' copies stamp the copy time instead).
+      const indexMtime = Option.getOrUndefined(indexInfo.mtime);
+      if (indexMtime !== undefined) {
+        yield* fileSystem.utimes(tempIndexPath, indexMtime, indexMtime);
+      }
+      // `add -A` never re-reads assume-unchanged entries, so edits to them would be missing from
+      // the checkpoint. Clear the flag in the copy; the real index keeps it.
+      const listing = yield* execute({
+        operation: "GitVcsDriver.checkpoints.listAssumeUnchanged",
+        cwd,
+        args: ["ls-files", "-v", "-z"],
+        env: tempIndexEnv,
+        maxOutputBytes: 256 * 1024 * 1024,
+      });
+      if (listing.stdoutTruncated) {
+        return yield* Effect.fail("index listing truncated");
+      }
+      const assumeUnchanged = listing.stdout
+        .split("\0")
+        .filter((entry) => /^[a-z] /.test(entry))
+        .map((entry) => entry.slice(2));
+      if (assumeUnchanged.length > 0) {
+        yield* execute({
+          operation: "GitVcsDriver.checkpoints.clearAssumeUnchanged",
+          cwd,
+          args: ["update-index", "--no-assume-unchanged", "-z", "--stdin"],
+          env: tempIndexEnv,
+          stdin: `${assumeUnchanged.join("\0")}\0`,
+        });
+      }
       return true;
-    }).pipe(Effect.orElseSucceed(() => false));
+    }).pipe(
+      Effect.catch(() =>
+        fileSystem.remove(tempIndexPath, { force: true }).pipe(Effect.ignore, Effect.as(false)),
+      ),
+    );
 
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
@@ -799,7 +836,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         // root, start from a copy of the real index instead: `add -A -- .` still records the
         // whole worktree, but only re-reads files whose stat data changed. Below the root, paths
         // outside cwd must keep HEAD's content, so the copy (which carries staged work) is skipped.
-        const seededFromIndex = yield* seedTempIndexFromWorktreeIndex(input.cwd, tempIndexPath);
+        const seededFromIndex = yield* seedTempIndexFromWorktreeIndex(
+          input.cwd,
+          tempIndexPath,
+          commitEnv,
+        );
         const headExists = seededFromIndex ? false : yield* hasHeadCommit(input.cwd);
         if (headExists) {
           yield* execute({

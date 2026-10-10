@@ -16,6 +16,7 @@ import {
   getChangedTypographySettingLabels,
   hasChangedBackgroundActivitySettings,
   resolveBackgroundActivityProfileOption,
+  resolveAutoSettleDraftCommit,
 } from "./SettingsPanels.logic";
 
 describe("typography settings restore", () => {
@@ -262,5 +263,21 @@ describe("getChangedBrowserSettingLabels", () => {
       "Open links in",
       "Floating preview",
     ]);
+  });
+});
+
+describe("resolveAutoSettleDraftCommit", () => {
+  it("saves a finished draft in its unit", () => {
+    expect(resolveAutoSettleDraftCommit("15", "minutes", 3)).toBe(15 / 1440);
+    expect(resolveAutoSettleDraftCommit("1", "hours", 3)).toBe(1 / 24);
+    expect(resolveAutoSettleDraftCommit(" 2 ", "days", 3)).toBe(2);
+  });
+
+  it("keeps the current value for unchanged, empty, fractional or out-of-range drafts", () => {
+    expect(resolveAutoSettleDraftCommit("3", "days", 3)).toBeNull();
+    expect(resolveAutoSettleDraftCommit("", "minutes", 3)).toBeNull();
+    expect(resolveAutoSettleDraftCommit("3.5", "hours", 3)).toBeNull();
+    expect(resolveAutoSettleDraftCommit("0", "minutes", 3)).toBeNull();
+    expect(resolveAutoSettleDraftCommit("91", "days", 3)).toBeNull();
   });
 });

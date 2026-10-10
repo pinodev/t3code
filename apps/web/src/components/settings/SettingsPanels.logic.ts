@@ -8,7 +8,11 @@ import type {
   ServerSettings,
   UnifiedSettings,
 } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  type AutoSettleUnit,
+  DEFAULT_UNIFIED_SETTINGS,
+  joinAutoSettleAfterDays,
+} from "@t3tools/contracts/settings";
 import {
   getBackgroundActivityBaseProfile,
   normalizeBackgroundActivitySettings,
@@ -304,4 +308,19 @@ export function backgroundActivityOverrideSettings(
       overrides: nextOverrides as BackgroundActivitySettings["overrides"],
     },
   };
+}
+
+/**
+ * The auto-settle threshold a finished draft should save, or null to keep the current one.
+ * Drafts are saved on blur or Enter, not per keystroke: typing "15" minutes would otherwise
+ * save 1 minute first, long enough for a settle sweep to act on it.
+ */
+export function resolveAutoSettleDraftCommit(
+  draft: string,
+  unit: AutoSettleUnit,
+  currentDays: number,
+): number | null {
+  // Number(), not parseInt: "3.5" must be rejected, not truncated to 3.
+  const days = draft.trim() === "" ? null : joinAutoSettleAfterDays(Number(draft), unit);
+  return days === null || days === currentDays ? null : days;
 }
