@@ -203,6 +203,22 @@ const RESPONSE_STREAMING_MODE_DESCRIPTIONS: Record<ResponseStreamingMode, string
   token: "Every token repaints the message as it arrives. Slower and harder to read.",
 };
 
+const DONE_STATUS_MINUTE_OPTIONS = [
+  { minutes: 0, label: "Until opened" },
+  { minutes: 5, label: "5 minutes" },
+  { minutes: 15, label: "15 minutes" },
+  { minutes: 60, label: "1 hour" },
+  { minutes: 240, label: "4 hours" },
+  { minutes: 1440, label: "1 day" },
+] as const;
+
+function doneStatusMinutesLabel(minutes: number): string {
+  return (
+    DONE_STATUS_MINUTE_OPTIONS.find((option) => option.minutes === minutes)?.label ??
+    `${minutes} minutes`
+  );
+}
+
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
   "12-hour": "12-hour",
@@ -563,6 +579,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
         ? ["Visible threads"]
         : []),
+      ...(settings.sidebarDoneStatusMinutes !== DEFAULT_UNIFIED_SETTINGS.sidebarDoneStatusMinutes
+        ? ["Done status duration"]
+        : []),
       ...(settings.sidebarAutoSettleAfterDays !==
         DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ||
       settings.sidebarAutoSettleAfterMinutes !==
@@ -678,6 +697,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarAutoSettleAfterMinutes,
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarThreadPreviewCount,
+      settings.sidebarDoneStatusMinutes,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
       settings.notificationMode,
@@ -770,6 +790,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
+      sidebarDoneStatusMinutes: DEFAULT_UNIFIED_SETTINGS.sidebarDoneStatusMinutes,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleAfterMinutes: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterMinutes,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -2467,6 +2488,47 @@ export function GeneralSettingsPanel() {
             ) : null}
           </>
         ) : null}
+        <SettingsRow
+          {...searchableSetting("done-status-duration")}
+          description="How long a finished thread keeps its Done status in the sidebar. Opening the thread always clears it."
+          resetAction={
+            settings.sidebarDoneStatusMinutes !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarDoneStatusMinutes ? (
+              <SettingResetButton
+                label="Done status duration"
+                onClick={() =>
+                  updateSettings({
+                    sidebarDoneStatusMinutes: DEFAULT_UNIFIED_SETTINGS.sidebarDoneStatusMinutes,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.sidebarDoneStatusMinutes)}
+              onValueChange={(value) => {
+                const minutes = Number(value);
+                if (Number.isInteger(minutes) && minutes >= 0) {
+                  updateSettings({ sidebarDoneStatusMinutes: minutes });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Done status duration">
+                <SelectValue>
+                  {doneStatusMinutesLabel(settings.sidebarDoneStatusMinutes)}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {DONE_STATUS_MINUTE_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.minutes} value={String(option.minutes)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
       </SettingsSection>
 
       <SettingsSection id="behavior" title="Behavior">
