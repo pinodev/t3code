@@ -252,6 +252,7 @@ const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
 // Fresh keys deliberately reset both shelves to collapsed for existing users.
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
+const PINS_SUSPENDED_KEY = "t3code:sidebar:pins-suspended";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 
 function compactSidebarTimeLabel(label: string): string {
@@ -2537,6 +2538,18 @@ export default function Sidebar() {
         override holds until all of them appear in canonical state. */
     readonly assignedKeys: ReadonlyMap<string, string>;
   } | null>(null);
+  // Client-only view switch: pinned threads fall back into the active list,
+  // which is sorted by last activity. Pins stay stored on the server, and
+  // dragging is off meanwhile so no drop can rewrite pin state or order keys.
+  const [pinsSuspended, setPinsSuspended] = useLocalStorage(
+    PINS_SUSPENDED_KEY,
+    false,
+    Schema.Boolean,
+  );
+  const togglePinsSuspended = useCallback(
+    () => setPinsSuspended((value) => !value),
+    [setPinsSuspended],
+  );
   const {
     pinnedThreads,
     draggableThreadKeys,
@@ -2576,7 +2589,11 @@ export default function Sidebar() {
       if (capabilities?.threadActiveReorder === true) activeReorderable.add(threadKey);
       // Older servers retain their existing drag actions. Active placement
       // additionally requires its own ordering capability at the drop target.
-      if (capabilities?.threadPinning === true && capabilities.threadPinReorder === true) {
+      if (
+        !pinsSuspended &&
+        capabilities?.threadPinning === true &&
+        capabilities.threadPinReorder === true
+      ) {
         draggable.add(threadKey);
       }
       if (optimisticDrop?.key === threadKey) {
@@ -2601,7 +2618,7 @@ export default function Sidebar() {
         snoozed.push(thread);
       } else if (supportsSettlement && thread.settledOverride === "settled") {
         settled.push(thread);
-      } else if (thread.pinnedAt != null) {
+      } else if (thread.pinnedAt != null && !pinsSuspended) {
         pinned.push(thread);
       } else {
         active.push(thread);
@@ -2635,7 +2652,15 @@ export default function Sidebar() {
       settledThreads: sortSettledThreadsForSidebar(settled),
       snoozeNow: preciseNow,
     };
-  }, [nowMinute, optimisticDrop, scopedProjectKeys, serverConfigs, snoozeWakeTick, visibleThreads]);
+  }, [
+    nowMinute,
+    optimisticDrop,
+    pinsSuspended,
+    scopedProjectKeys,
+    serverConfigs,
+    snoozeWakeTick,
+    visibleThreads,
+  ]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -4555,6 +4580,8 @@ export default function Sidebar() {
                   </ComboboxPopup>
                 </Combobox>
               }
+              pinsSuspended={pinsSuspended}
+              onTogglePinsSuspended={togglePinsSuspended}
               onNewProject={openAddProjectCommandPalette}
               onNewThread={handleNewThreadClick}
               newThreadDisabled={projects.length === 0}

@@ -10,7 +10,14 @@
  * of the sidebar's scope logic. `searchFieldRef` lands on the search field so
  * the picker's popup can anchor to that width rather than to its 28px trigger.
  */
-import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
+import {
+  FolderPlusIcon,
+  PinIcon,
+  PinOffIcon,
+  SearchIcon,
+  SquarePenIcon,
+  XIcon,
+} from "lucide-react";
 import {
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -32,6 +39,9 @@ export interface SidebarThreadHeaderProps {
   hasProjects: boolean;
   /** The project scope combobox, rendered as the first icon of the group. */
   projectScope: ReactNode;
+  /** While set, pinned threads list with the rest by last activity. */
+  pinsSuspended: boolean;
+  onTogglePinsSuspended: () => void;
   onNewProject: () => void;
   /** Receives the click so Shift+click can skip the project picker. */
   onNewThread: (event: ReactMouseEvent) => void;
@@ -54,6 +64,8 @@ export function SidebarThreadHeader({
   searchFieldRef,
   hasProjects,
   projectScope,
+  pinsSuspended,
+  onTogglePinsSuspended,
   onNewProject,
   onNewThread,
   newThreadDisabled,
@@ -126,6 +138,13 @@ export function SidebarThreadHeader({
           hover states, and a background well reads far louder on themed
           palettes than on the base light and dark ones. */}
       <div className="flex shrink-0 items-center">
+        <SidebarHeaderIconButton
+          label={pinsSuspended ? "Restore pinned threads" : "Ignore pins, sort by last active"}
+          aria-pressed={pinsSuspended}
+          onClick={onTogglePinsSuspended}
+        >
+          {pinsSuspended ? <PinOffIcon /> : <PinIcon />}
+        </SidebarHeaderIconButton>
         {hasProjects ? (
           <>
             {projectScope}
