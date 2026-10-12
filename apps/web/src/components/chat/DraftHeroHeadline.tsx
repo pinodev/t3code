@@ -219,7 +219,7 @@ export function DraftHeroHeadline({
   );
 
   return (
-    <h1 className="font-normal text-[1.05rem] text-foreground tracking-tight sm:text-[1.3125rem]">
+    <h1 className="font-normal text-xs text-foreground">
       {hasResolvedProject ? (
         <>{projectSelector}?</>
       ) : canChooseProject ? (
