@@ -265,6 +265,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
   },
   {
+    id: "done-status-duration",
+    title: "Done status duration",
+    to: "/settings/general",
+    searchTerms: ["done finished completed unread badge pill sidebar expire minutes hours"],
+  },
+  {
     id: "thread-notifications",
     title: "Thread notifications",
     to: "/settings/general",

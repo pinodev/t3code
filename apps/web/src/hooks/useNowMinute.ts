@@ -64,3 +64,19 @@ function getSnapshot(): string {
 export function useNowMinute(): string {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
+
+const subscribeNever = () => () => {};
+
+/** True once `minutes` have passed since `since`, on the same minute clock.
+    The caller re-renders only when the answer flips; a null timestamp or a
+    non-positive duration never elapses and never subscribes. */
+export function useMinutesElapsed(since: string | null | undefined, minutes: number): boolean {
+  const start = since == null || minutes <= 0 ? Number.NaN : Date.parse(since);
+  const deadline = start + minutes * 60_000;
+  const elapsed = () => !Number.isNaN(deadline) && Date.parse(`${getSnapshot()}:00Z`) >= deadline;
+  return useSyncExternalStore(
+    Number.isNaN(deadline) ? subscribeNever : subscribe,
+    elapsed,
+    elapsed,
+  );
+}
