@@ -101,6 +101,37 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect(
+      "falls back to an ancestor directory when a relative file is missing in the root",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const path = yield* Path.Path;
+          const vault = yield* makeTempDir;
+          const cwd = path.join(vault, "agi");
+          yield* writeTextFile(cwd, "AGI.md", "# project\n");
+          yield* writeTextFile(vault, "srv/skills/SKILL.md", "# vault skill\n");
+          yield* writeTextFile(vault, "AGI.md", "# vault copy\n");
+
+          const fromVault = yield* workspaceFileSystem.readFile({
+            cwd,
+            relativePath: "srv/skills/SKILL.md",
+          });
+          const inRoot = yield* workspaceFileSystem.readFile({ cwd, relativePath: "AGI.md" });
+          const missing = yield* workspaceFileSystem
+            .readFile({ cwd, relativePath: "srv/nowhere.md" })
+            .pipe(Effect.flip);
+
+          expect(fromVault).toMatchObject({
+            relativePath: "srv/skills/SKILL.md",
+            contents: "# vault skill\n",
+          });
+          // The workspace itself always wins over an ancestor.
+          expect(inRoot.contents).toBe("# project\n");
+          expect(missing).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+        }),
+    );
+
     // Needs mkfifo; Windows has no FIFOs to reject.
     it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
       "rejects a FIFO without blocking on open",

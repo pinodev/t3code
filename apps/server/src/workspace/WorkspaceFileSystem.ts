@@ -140,9 +140,28 @@ export const make = Effect.gen(function* () {
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
 
   /**
+   * Agents often write a relative link against a folder above the workspace (a vault
+   * root over the project), so a path missing inside the workspace is looked up in
+   * each ancestor directory, nearest first.
+   */
+  const findInAncestorDirectory = async (
+    workspaceRoot: string,
+    relativePath: string,
+  ): Promise<string | null> => {
+    for (let dir = path.dirname(workspaceRoot); ; dir = path.dirname(dir)) {
+      try {
+        return await NodeFSP.realpath(path.join(dir, relativePath));
+      } catch {
+        if (path.dirname(dir) === dir) return null;
+      }
+    }
+  };
+
+  /**
    * Resolves the file a read targets. Workspace-relative paths must stay inside the
-   * root, symlinks included. An absolute path reads a host file in place, such as a
-   * report an agent wrote to a temp directory; it gets no root check.
+   * root, symlinks included, unless they are missing there and exist in an ancestor
+   * directory. An absolute path reads a host file in place, such as a report an agent
+   * wrote to a temp directory; it gets no root check.
    */
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
@@ -181,8 +200,17 @@ export const make = Effect.gen(function* () {
           cause,
         }),
     });
-    const realTargetPath = yield* Effect.tryPromise({
-      try: () => NodeFSP.realpath(target.absolutePath),
+    const resolved = yield* Effect.tryPromise({
+      try: async () => {
+        try {
+          return { realPath: await NodeFSP.realpath(target.absolutePath), inAncestor: false };
+        } catch (cause) {
+          if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+          const realPath = await findInAncestorDirectory(realWorkspaceRoot, target.relativePath);
+          if (realPath === null) throw cause;
+          return { realPath, inAncestor: true };
+        }
+      },
       catch: (cause) =>
         new WorkspaceFileSystemOperationError({
           workspaceRoot: input.cwd,
@@ -193,6 +221,12 @@ export const make = Effect.gen(function* () {
           cause,
         }),
     });
+    const realTargetPath = resolved.realPath;
+    // Reads of absolute host paths are already unrestricted, so a hit above the
+    // workspace adds no reach and skips the root check.
+    if (resolved.inAncestor) {
+      return { relativePath: target.relativePath, realTargetPath };
+    }
     const relativeRealPath = path.relative(realWorkspaceRoot, realTargetPath);
     if (
       relativeRealPath.startsWith(`..${path.sep}`) ||
