@@ -10,6 +10,8 @@ import {
 import {
   buildProjectScript,
   commandForProjectScript,
+  expandProjectScriptPlaceholders,
+  projectScriptContextEnv,
   nextProjectScriptId,
   primaryProjectScript,
   projectScriptIdFromCommand,
@@ -169,5 +171,25 @@ describe("projectScripts helpers", () => {
         worktreePath: null,
       }),
     ).toBe("/repo");
+  });
+});
+
+describe("expandProjectScriptPlaceholders", () => {
+  it("replaces known placeholders and leaves other braces alone", () => {
+    expect(
+      expandProjectScriptPlaceholders(
+        "log {threadGuid} {threadTitle} {threadEffort} {unknown} { $_ }",
+        { threadGuid: "t-1", threadTitle: "Fix\nbuild" },
+      ),
+    ).toBe("log t-1 Fix build  {unknown} { $_ }");
+  });
+
+  it("exports the same context as T3CODE_ variables", () => {
+    expect(
+      projectScriptContextEnv({ serverGuid: "env-1", threadTitle: "Hi", branch: null }),
+    ).toEqual({
+      T3CODE_SERVER_GUID: "env-1",
+      T3CODE_THREAD_TITLE: "Hi",
+    });
   });
 });

@@ -30,7 +30,11 @@ import {
   decodeProjectScriptKeybindingRule,
 } from "~/lib/projectScriptKeybindings";
 import { keybindingFromKeyboardEvent } from "~/components/settings/KeybindingsSettings.logic";
-import { commandForProjectScript, nextProjectScriptId } from "~/projectScripts";
+import {
+  commandForProjectScript,
+  nextProjectScriptId,
+  PROJECT_SCRIPT_PLACEHOLDERS,
+} from "~/projectScripts";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -383,6 +387,17 @@ export function ProjectScriptEditorDialog({
                     value={command}
                     onChange={(event) => setCommand(event.target.value)}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Placeholders:{" "}
+                    {PROJECT_SCRIPT_PLACEHOLDERS.map((name, index) => (
+                      <span key={name}>
+                        {index > 0 ? ", " : null}
+                        <code>{`{${name}}`}</code>
+                      </span>
+                    ))}
+                    . Each is also set as an environment variable such as{" "}
+                    <code>T3CODE_THREAD_TITLE</code>, the safe way to pass free text.
+                  </p>
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="script-preview-url">Preview URL (optional)</Label>

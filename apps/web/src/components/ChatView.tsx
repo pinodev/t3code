@@ -65,6 +65,7 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
+  getModelSelectionStringOptionValue,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import {
@@ -242,8 +243,11 @@ import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   buildProjectScript,
   commandForProjectScript,
+  expandProjectScriptPlaceholders,
   nextProjectScriptId,
+  projectScriptContextEnv,
   projectScriptIdFromCommand,
+  type ProjectScriptContext,
 } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
@@ -4176,12 +4180,28 @@ export default function ChatView(props: ChatViewProps) {
       }
       setTerminalFocusRequestId((value) => value + 1);
 
+      const scriptContext: ProjectScriptContext = {
+        serverGuid: activeThread.environmentId,
+        serverName: environmentById.get(activeThread.environmentId)?.label ?? null,
+        projectGuid: activeProject.id,
+        projectName: activeProject.title,
+        projectRoot: activeProject.workspaceRoot,
+        threadGuid: activeThreadId,
+        threadTitle: activeThread.title,
+        threadProvider: activeThread.modelSelection.instanceId,
+        threadModel: activeThread.modelSelection.model,
+        threadEffort:
+          getModelSelectionStringOptionValue(activeThread.modelSelection, "effort") ?? null,
+        branch: activeThread.branch,
+        worktreePath: targetWorktreePath,
+        cwd: targetCwd,
+      };
       const runtimeEnv = projectScriptRuntimeEnv({
         project: {
           cwd: activeProject.workspaceRoot,
         },
         worktreePath: targetWorktreePath,
-        ...(options?.env ? { extraEnv: options.env } : {}),
+        extraEnv: { ...projectScriptContextEnv(scriptContext), ...options?.env },
       });
       const targetTerminalId = shouldCreateNewTerminal
         ? nextTerminalId(allocatableActiveTerminalIds)
@@ -4227,7 +4247,7 @@ export default function ChatView(props: ChatViewProps) {
         input: {
           threadId: activeThreadId,
           terminalId: targetTerminalId,
-          data: `${script.command}\r`,
+          data: `${expandProjectScriptPlaceholders(script.command, scriptContext)}\r`,
         },
       });
       if (writeResult._tag === "Failure" && !isAtomCommandInterrupted(writeResult)) {
@@ -4243,6 +4263,7 @@ export default function ChatView(props: ChatViewProps) {
       activeThread,
       activeThreadId,
       activeThreadRef,
+      environmentById,
       gitCwd,
       setTerminalOpen,
       setThreadError,
