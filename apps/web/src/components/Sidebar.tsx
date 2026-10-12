@@ -121,7 +121,7 @@ import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
-import { useNowMinute } from "../hooks/useNowMinute";
+import { useMinutesElapsed, useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import {
   readThreadShell,
@@ -139,7 +139,11 @@ import {
   resolveActiveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "../threadRoutes";
-import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
+import {
+  formatDayAwareTimestamp,
+  formatRelativeTimeLabel,
+  parseTimestampDate,
+} from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
@@ -345,6 +349,10 @@ function SidebarThreadTooltip({
 }) {
   const driverKind = providerEntry?.driverKind ?? null;
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  // Hovering swaps the row's time label for its settle control, so the
+  // tooltip always carries the time.
+  const lastActiveAt = thread.latestUserMessageAt ?? thread.updatedAt;
   return (
     <TooltipPopup
       side="right"
@@ -371,6 +379,15 @@ function SidebarThreadTooltip({
                 className="size-3 shrink-0 stroke-muted-foreground"
               />
               <div className="min-w-0 truncate text-foreground/75">{environmentLabel}</div>
+            </div>
+          ) : null}
+          {lastActiveAt ? (
+            <div className="flex min-w-0 items-center gap-2">
+              <ClockIcon className="size-3 shrink-0 stroke-muted-foreground" />
+              <div className="min-w-0 truncate text-foreground/75">
+                Last active {formatRelativeTimeLabel(lastActiveAt)} ·{" "}
+                {formatDayAwareTimestamp(lastActiveAt, timestampFormat)}
+              </div>
             </div>
           ) : null}
           {thread.branch ? (
@@ -1109,6 +1126,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Same semantics as the legacy sidebar (never-visited counts as read):
   // switching sidebars must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
+  // The "Done" pill can be set to fade after a while (Settings > Organization);
+  // the unread emphasis on the title stays until the thread is opened.
+  const doneStatusMinutes = useClientSettings((settings) => settings.sidebarDoneStatusMinutes);
+  const doneStatusExpired = useMinutesElapsed(
+    isUnread ? thread.latestTurn?.completedAt : null,
+    doneStatusMinutes,
+  );
   const status = resolveSidebarThreadStatus(thread);
   // A woken thread reappears at its original position (the sort is
   // deliberately static), so the pill has to carry the weight. Snoozing is
@@ -1177,7 +1201,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     icon: "woke" as const,
                     className: "text-amber-700 dark:text-amber-300",
                   }
-                : isUnread
+                : isUnread && !doneStatusExpired
                   ? {
                       label: "Done",
                       icon: "done" as const,
@@ -1577,6 +1601,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
+        data-thread-key={threadKey}
         {...sortableRootProps}
         {...(fileDropHandlers ?? {})}
         className={cn(
@@ -1740,6 +1765,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   return (
     <li
       data-thread-item
+      data-thread-key={threadKey}
       {...sortableRootProps}
       {...(fileDropHandlers ?? {})}
       className={cn(
@@ -2153,7 +2179,7 @@ export default function Sidebar() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const router = useRouter();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, setOpenMobile, setOpen: setSidebarOpen } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -3276,6 +3302,53 @@ export default function Sidebar() {
     add(settledThreads, "settled");
     return map;
   }, [activeThreads, pinnedThreads, settledThreads, snoozedThreads]);
+
+  // Ctrl+Alt+S reveals the open thread: clears whatever hides its row (search,
+  // project scope, a collapsed shelf, a closed sidebar), then scrolls to the row,
+  // focuses it and flashes it once. Client-only shortcut, so it is not listed
+  // in the keybindings settings.
+  const [revealRequest, setRevealRequest] = useState(0);
+  const pendingRevealRef = useRef(false);
+  const revealStateRef = useRef({ routeThreadKey, sectionByThreadKey, scopedProjectKeys });
+  revealStateRef.current = { routeThreadKey, sectionByThreadKey, scopedProjectKeys };
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        !event.ctrlKey ||
+        !event.altKey ||
+        event.shiftKey ||
+        event.metaKey ||
+        event.code !== "KeyS"
+      ) {
+        return;
+      }
+      const { routeThreadKey: key, sectionByThreadKey: sections } = revealStateRef.current;
+      if (key === null) return;
+      event.preventDefault();
+      clearThreadSearch();
+      const section = sections.get(key);
+      if (section === undefined && revealStateRef.current.scopedProjectKeys !== null) {
+        setProjectScopeKey(null);
+      }
+      if (section === "settled") setSettledShelfExpanded(true);
+      if (section === "snoozed") setSnoozedShelfExpanded(true);
+      if (isMobile) setOpenMobile(true);
+      else setSidebarOpen(true);
+      pendingRevealRef.current = true;
+      setRevealRequest((count) => count + 1);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    clearThreadSearch,
+    isMobile,
+    setOpenMobile,
+    setProjectScopeKey,
+    setSettledShelfExpanded,
+    setSidebarOpen,
+    setSnoozedShelfExpanded,
+  ]);
   const pinnedKeys = useMemo(
     () =>
       pinnedThreads.map((thread) =>
@@ -3472,6 +3545,23 @@ export default function Sidebar() {
     snoozedThreads.length,
     visibleSnoozedThreads,
   ]);
+  // Runs again once an expanded shelf or a cleared filter has rendered the row,
+  // and stops after the first hit so later list updates never steal focus.
+  useEffect(() => {
+    if (!pendingRevealRef.current || routeThreadKey === null) return;
+    const item = document.querySelector<HTMLElement>(
+      `[data-thread-key="${globalThis.CSS.escape(routeThreadKey)}"]`,
+    );
+    const row = item?.querySelector<HTMLElement>('[role="button"]');
+    if (!item || !row) return;
+    pendingRevealRef.current = false;
+    item.scrollIntoView({ block: "center" });
+    row.focus({ preventScroll: true });
+    row.animate(
+      [{ boxShadow: "inset 0 0 0 2px var(--ring)" }, { boxShadow: "inset 0 0 0 2px transparent" }],
+      { duration: 1200, easing: "ease-out" },
+    );
+  }, [revealRequest, routeThreadKey, sidebarListItems]);
   useEffect(() => {
     if (
       dragState !== null &&
