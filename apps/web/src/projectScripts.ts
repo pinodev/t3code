@@ -90,3 +90,52 @@ export function primaryProjectScript(scripts: ReadonlyArray<ProjectScript>): Pro
   const regular = scripts.find((script) => !script.runOnWorktreeCreate);
   return regular ?? scripts[0] ?? null;
 }
+
+/** Placeholders an action's command can use, e.g. `echo {threadTitle}`. Each is also
+    exported to the action's terminal as T3CODE_<NAME> (threadTitle -> T3CODE_THREAD_TITLE),
+    which is the quoting-safe way to pass free text such as titles. */
+export const PROJECT_SCRIPT_PLACEHOLDERS = [
+  "serverGuid",
+  "serverName",
+  "projectGuid",
+  "projectName",
+  "projectRoot",
+  "threadGuid",
+  "threadTitle",
+  "threadProvider",
+  "threadModel",
+  "threadEffort",
+  "branch",
+  "worktreePath",
+  "cwd",
+] as const;
+
+export type ProjectScriptPlaceholder = (typeof PROJECT_SCRIPT_PLACEHOLDERS)[number];
+export type ProjectScriptContext = Partial<Record<ProjectScriptPlaceholder, string | null>>;
+
+const isProjectScriptPlaceholder = (name: string): name is ProjectScriptPlaceholder =>
+  (PROJECT_SCRIPT_PLACEHOLDERS as readonly string[]).includes(name);
+
+// Values are typed into a terminal: a line break would submit a second command.
+const singleLine = (value: string) => value.replace(/[\r\n]+/g, " ");
+
+/** Replaces known `{placeholder}`s with the context's values (empty when unknown for this
+    thread). Anything else in braces, such as a PowerShell script block, is left untouched. */
+export function expandProjectScriptPlaceholders(
+  command: string,
+  context: ProjectScriptContext,
+): string {
+  return command.replace(/\{([A-Za-z]+)\}/g, (match, name: string) =>
+    isProjectScriptPlaceholder(name) ? singleLine(context[name] ?? "") : match,
+  );
+}
+
+/** The same context as T3CODE_* environment variables, skipping empty values. */
+export function projectScriptContextEnv(context: ProjectScriptContext): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const name of PROJECT_SCRIPT_PLACEHOLDERS) {
+    const value = context[name];
+    if (value) env[`T3CODE_${name.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase()}`] = value;
+  }
+  return env;
+}
