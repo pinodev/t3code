@@ -28,10 +28,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
+import { RightPanelResizeHandle } from "~/components/preview/RightPanelResizeHandle";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { useResizableWidth } from "~/hooks/useResizableWidth";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
@@ -894,6 +896,11 @@ function renderedToggleLabel(mode: "markdown" | "html" | "table", rendered: bool
   return rendered ? "Show HTML source" : "Show rendered page";
 }
 
+const EXPLORER_WIDTH_STORAGE_KEY = "t3code:file-explorer-width";
+const EXPLORER_DEFAULT_WIDTH = 256;
+const EXPLORER_MIN_WIDTH = 160;
+const EXPLORER_MAX_WIDTH = 720;
+
 function initialExplorerOpen(): boolean {
   try {
     return getLocalStorageItem(FILE_EXPLORER_STORAGE_KEY, Schema.Boolean) ?? true;
@@ -948,6 +955,14 @@ export default function FilePreviewPanel({
     attachment === undefined && !isMedia && !isPdf,
   );
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
+  // The tree beside an open file is a right-anchored column; its width is the user's to set.
+  const { width: explorerWidth, handlers: explorerResizeHandlers } = useResizableWidth({
+    storageKey: EXPLORER_WIDTH_STORAGE_KEY,
+    defaultWidth: EXPLORER_DEFAULT_WIDTH,
+    minWidth: EXPLORER_MIN_WIDTH,
+    maxWidth: EXPLORER_MAX_WIDTH,
+    edge: "left",
+  });
   const showExplorer = shouldShowFileExplorer({
     relativePath,
     explorerOpen,
@@ -1278,12 +1293,12 @@ export default function FilePreviewPanel({
         {showExplorer ? (
           <aside
             className={cn(
-              "flex min-h-0 shrink-0 bg-background",
-              relativePath
-                ? "w-[min(22rem,46%)] min-w-64 border-l border-border/60"
-                : "min-w-0 flex-1",
+              "relative flex min-h-0 shrink-0 bg-background",
+              relativePath ? "max-w-[70%] border-l border-border/60" : "min-w-0 flex-1",
             )}
+            style={relativePath ? { width: explorerWidth } : undefined}
           >
+            {relativePath ? <RightPanelResizeHandle handlers={explorerResizeHandlers} /> : null}
             <FileBrowserPanel
               key={`${environmentId}:${cwd}`}
               environmentId={environmentId}
