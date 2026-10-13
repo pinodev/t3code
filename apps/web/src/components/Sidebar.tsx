@@ -2224,6 +2224,24 @@ export default function Sidebar() {
       );
     },
   });
+  const { copyToClipboard: copyThreadUriToClipboard } = useCopyToClipboard<{ uri: string }>({
+    onCopy: ({ uri }) => {
+      toastManager.add({
+        type: "success",
+        title: "Thread URI copied",
+        description: uri,
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy thread URI",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    },
+  });
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
     () => openCommandPalette({ open: "add-project" }),
@@ -4237,6 +4255,12 @@ export default function Sidebar() {
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
             return;
+          case "copy-thread-uri": {
+            // "{hostGuid}/{threadGuid}": the environment id is the backend's GUID.
+            const uri = `${threadRef.environmentId}/${thread.id}`;
+            copyThreadUriToClipboard(uri, { uri });
+            return;
+          }
           case "archive": {
             if (confirmThreadArchive) {
               const confirmed = await settlePromise(() =>
@@ -4310,6 +4334,7 @@ export default function Sidebar() {
       copyBranchToClipboard,
       copyPathToClipboard,
       copyThreadIdToClipboard,
+      copyThreadUriToClipboard,
       deleteThread,
       handleMultiSelectContextMenu,
       markThreadUnread,

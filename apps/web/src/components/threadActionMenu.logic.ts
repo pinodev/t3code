@@ -25,6 +25,7 @@ export type ThreadActionMenuId =
   | "copy-path"
   | "copy-branch"
   | "copy-thread-id"
+  | "copy-thread-uri"
   | "archive"
   | "delete";
 
@@ -132,6 +133,7 @@ export function buildThreadActionMenuItems(
           ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
           : []),
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
+        { id: "copy-thread-uri", label: "Thread URI", icon: "link" },
       ],
     },
     { id: "project-settings", label: "Project settings", icon: "settings" },

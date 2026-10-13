@@ -103,6 +103,12 @@ export function useThreadActionMenu(input: {
     },
     onError: (error) => failureToast("Failed to copy thread ID", error),
   });
+  const { copyToClipboard: copyThreadUriToClipboard } = useCopyToClipboard<{ uri: string }>({
+    onCopy: ({ uri }) => {
+      toastManager.add({ type: "success", title: "Thread URI copied", description: uri });
+    },
+    onError: (error) => failureToast("Failed to copy thread URI", error),
+  });
 
   const openMenu = useCallback(
     (position: { x: number; y: number }) => {
@@ -285,6 +291,12 @@ export function useThreadActionMenu(input: {
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
             return;
+          case "copy-thread-uri": {
+            // "{hostGuid}/{threadGuid}": the environment id is the backend's GUID.
+            const uri = `${threadRef.environmentId}/${thread.id}`;
+            copyThreadUriToClipboard(uri, { uri });
+            return;
+          }
           case "archive": {
             if (confirmThreadArchive) {
               const confirmed = await settlePromise(() =>
@@ -345,6 +357,7 @@ export function useThreadActionMenu(input: {
       copyBranchToClipboard,
       copyPathToClipboard,
       copyThreadIdToClipboard,
+      copyThreadUriToClipboard,
       deleteThread,
       handleNewThread,
       markThreadUnread,

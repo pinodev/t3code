@@ -60,6 +60,11 @@ describe("buildThreadActionMenuItems", () => {
     expect(items[copyIndex + 2]?.id).toBe("archive");
   });
 
+  it("offers the thread URI beside the legacy thread ID", () => {
+    const copyIds = allIds(baseState);
+    expect(copyIds.indexOf("copy-thread-uri")).toBe(copyIds.indexOf("copy-thread-id") + 1);
+  });
+
   it("includes branch items only for threads with a branch", () => {
     const withBranch = allIds({ ...baseState, branch: "feat/menu" });
     expect(withBranch).toContain("new-thread-on-branch");
