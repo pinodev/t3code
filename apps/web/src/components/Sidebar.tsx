@@ -169,6 +169,7 @@ import {
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
   searchSidebarThreads,
+  shouldKeepThreadSearchOpenAfterSelect,
   shouldCreateNewThreadInCurrentProject,
   shouldNavigateAfterThreadPark,
   shouldRecedeSidebarThread,
@@ -2013,6 +2014,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   isHighlighted: boolean;
   isRouteActive: boolean;
+  wasOpened: boolean;
   resultId: string;
   onHighlight: () => void;
   onSelect: () => void;
@@ -2117,6 +2119,12 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
             <ProjectFavicon project={props.project} className="size-4 shrink-0" />
           ) : null}
           <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+          {props.wasOpened && !props.isRouteActive ? (
+            <EyeIcon
+              aria-label="Opened from this search"
+              className="size-3 shrink-0 text-muted-foreground/55"
+            />
+          ) : null}
           <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
             {threadTimeLabel(thread)}
           </span>
@@ -2682,7 +2690,13 @@ export default function Sidebar() {
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
-  const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
+  // The highlight follows a thread, not a position: results reorder live as
+  // threads change, and opening one keeps the list up when there are several.
+  const [activeSearchResultKey, setActiveSearchResultKey] = useState<string | null>(null);
+  // Results opened during this search, so the ones already looked at stand out.
+  const [openedSearchResultKeys, setOpenedSearchResultKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
   const searchableThreads = useMemo(
     () => [...pinnedThreads, ...activeThreads, ...snoozedThreads, ...settledThreads],
@@ -2692,13 +2706,22 @@ export default function Sidebar() {
     () => searchSidebarThreads(searchableThreads, threadSearchQuery),
     [searchableThreads, threadSearchQuery],
   );
-  const threadSearchResultOrderKey = threadSearchResults
-    .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
-    .join("\0");
-
-  useEffect(() => {
-    setActiveSearchResultIndex(0);
-  }, [threadSearchResultOrderKey]);
+  const threadSearchResultKeys = useMemo(
+    () =>
+      threadSearchResults.map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+    [threadSearchResults],
+  );
+  const threadSearchResultOrderKey = threadSearchResultKeys.join("\0");
+  const activeSearchResultIndex = Math.max(
+    0,
+    activeSearchResultKey === null ? 0 : threadSearchResultKeys.indexOf(activeSearchResultKey),
+  );
+  const setActiveSearchResultIndex = useCallback(
+    (index: number) => setActiveSearchResultKey(threadSearchResultKeys[index] ?? null),
+    [threadSearchResultKeys],
+  );
 
   useEffect(() => {
     if (!isSearchingThreads) return;
@@ -2953,14 +2976,34 @@ export default function Sidebar() {
 
   const clearThreadSearch = useCallback(() => {
     setThreadSearchQuery("");
-    setActiveSearchResultIndex(0);
+    setActiveSearchResultKey(null);
+    setOpenedSearchResultKeys(new Set());
   }, []);
   const selectThreadSearchResult = useCallback(
-    (thread: EnvironmentThreadShell) => {
-      clearThreadSearch();
-      navigateToThread(scopeThreadRef(thread.environmentId, thread.id));
+    (thread: EnvironmentThreadShell, options?: { readonly keepSearchFocus?: boolean }) => {
+      const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+      if (!shouldKeepThreadSearchOpenAfterSelect(threadSearchResults.length)) {
+        clearThreadSearch();
+        void navigateToThread(threadRef);
+        return;
+      }
+      // Several matches: keep the results so the next one is a click away.
+      const threadKey = scopedThreadKey(threadRef);
+      setActiveSearchResultKey(threadKey);
+      setOpenedSearchResultKeys((keys) =>
+        keys.has(threadKey) ? keys : new Set(keys).add(threadKey),
+      );
+      const navigation = navigateToThread(threadRef);
+      if (!options?.keepSearchFocus) return;
+      // Opening a thread focuses its composer on the next frame; take focus back
+      // after that so the arrow keys keep walking the results.
+      void Promise.resolve(navigation).then(() => {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => threadSearchInputRef.current?.focus());
+        });
+      });
     },
-    [clearThreadSearch, navigateToThread],
+    [clearThreadSearch, navigateToThread, threadSearchResults.length],
   );
   const handleThreadSearchKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -2976,20 +3019,20 @@ export default function Sidebar() {
       if (threadSearchResults.length === 0) return;
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        setActiveSearchResultIndex((index) => (index + 1) % threadSearchResults.length);
+        setActiveSearchResultIndex((activeSearchResultIndex + 1) % threadSearchResults.length);
         return;
       }
       if (event.key === "ArrowUp") {
         event.preventDefault();
         setActiveSearchResultIndex(
-          (index) => (index - 1 + threadSearchResults.length) % threadSearchResults.length,
+          (activeSearchResultIndex - 1 + threadSearchResults.length) % threadSearchResults.length,
         );
         return;
       }
       if (event.key === "Enter") {
         event.preventDefault();
         const result = threadSearchResults[activeSearchResultIndex];
-        if (result) selectThreadSearchResult(result);
+        if (result) selectThreadSearchResult(result, { keepSearchFocus: true });
       }
     },
     [
@@ -2997,6 +3040,7 @@ export default function Sidebar() {
       clearThreadSearch,
       isSearchingThreads,
       selectThreadSearchResult,
+      setActiveSearchResultIndex,
       threadSearchResults,
     ],
   );
@@ -4617,7 +4661,8 @@ export default function Sidebar() {
               searchQuery={threadSearchQuery}
               onSearchQueryChange={(value) => {
                 setThreadSearchQuery(value);
-                setActiveSearchResultIndex(0);
+                setActiveSearchResultKey(null);
+                if (value.trim().length === 0) setOpenedSearchResultKeys(new Set());
               }}
               onSearchKeyDown={handleThreadSearchKeyDown}
               isSearching={isSearchingThreads}
@@ -4671,6 +4716,7 @@ export default function Sidebar() {
                         }
                         isHighlighted={activeSearchResultIndex === index}
                         isRouteActive={routeThreadKey === threadKey}
+                        wasOpened={openedSearchResultKeys.has(threadKey)}
                         resultId={`sidebar-thread-search-result-${index}`}
                         onHighlight={() => setActiveSearchResultIndex(index)}
                         onSelect={() => selectThreadSearchResult(thread)}

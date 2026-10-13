@@ -30,6 +30,7 @@ import {
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreads,
+  shouldKeepThreadSearchOpenAfterSelect,
   formatWorkingDurationLabel,
   shouldClearThreadSelectionOnMouseDown,
   shouldRecedeSidebarThread,
@@ -840,6 +841,14 @@ describe("global visibility filter", () => {
     expect(isVisibleByGlobalFilter("Unrelated", { ...base, inverted: true })).toBe(true);
     expect(isVisibleByGlobalFilter("Unrelated", null)).toBe(true);
     expect(isVisibleByGlobalFilter("Unrelated", { ...base, terms: [] })).toBe(true);
+  });
+});
+
+describe("shouldKeepThreadSearchOpenAfterSelect", () => {
+  it("keeps the search open only when there are other results to come back to", () => {
+    expect(shouldKeepThreadSearchOpenAfterSelect(1)).toBe(false);
+    expect(shouldKeepThreadSearchOpenAfterSelect(2)).toBe(true);
+    expect(shouldKeepThreadSearchOpenAfterSelect(12)).toBe(true);
   });
 });
 

@@ -952,6 +952,15 @@ export function searchSidebarThreads<
   );
 }
 
+/**
+ * Opening a search result keeps the search when it matched several threads, so
+ * the user can look into one and come back for the next; a lone match has
+ * nothing to come back to, so the search clears.
+ */
+export function shouldKeepThreadSearchOpenAfterSelect(resultCount: number): boolean {
+  return resultCount > 1;
+}
+
 export interface GlobalVisibilityFilter {
   readonly terms: readonly string[];
   readonly caseSensitive: boolean;
