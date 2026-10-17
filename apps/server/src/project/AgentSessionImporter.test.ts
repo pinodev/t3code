@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, vi } from "@effect/vitest";
 import {
   AgentSessionImportProjectChangedError,
+  type AgentSessionImportSelector,
   CommandId,
   MessageId,
   ProjectId,
@@ -184,12 +185,14 @@ const runImport = (input: {
   readonly directory: ProviderSessionDirectory.ProviderSessionDirectory["Service"];
   readonly snapshots: ReturnType<typeof makeSnapshotsLayer>;
   readonly expectedWorkspaceRoot?: string;
+  readonly session?: AgentSessionImportSelector;
 }) =>
   importRecentAgentThreads({
     projectId: PROJECT_ID,
     ...(input.expectedWorkspaceRoot === undefined
       ? {}
       : { expectedWorkspaceRoot: input.expectedWorkspaceRoot }),
+    ...(input.session === undefined ? {} : { session: input.session }),
   }).pipe(
     Effect.provideService(AgentSessionScanner.AgentSessionScanner, input.scanner),
     Effect.provideService(OrchestrationEngine.OrchestrationEngineService, input.engine),
@@ -536,6 +539,220 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
 
         expect(result).toEqual({ importedCount: 0, skippedCount: 2 });
         expect(commands).toHaveLength(0);
+      }),
+    );
+  });
+
+  describe("selected session import", () => {
+    const codexSession = (providerSessionId: string, instance = "codex") => ({
+      ...makeThread("codex"),
+      providerInstanceId: ProviderInstanceId.make(instance),
+      providerSessionId,
+      title: `Codex ${providerSessionId}`,
+    });
+    const selectedId = ThreadId.make("import:codex:codex-b");
+
+    // Records every write the importer could make. The scanner ignores the
+    // selector, so these tests prove the importer's own filtering.
+    const recordingImport = (input: {
+      readonly outcomes: ReadonlyArray<AgentSessionScanner.AgentSessionRecentThread>;
+      readonly session: AgentSessionImportSelector;
+      readonly getBinding?: (
+        threadId: ThreadId,
+      ) => Option.Option<ProviderSessionDirectory.ProviderRuntimeBinding>;
+    }) =>
+      Effect.gen(function* () {
+        const commands: Array<OrchestrationCommand> = [];
+        const bindings: Array<ProviderSessionDirectory.ProviderRuntimeBinding> = [];
+        const recorded: Array<ThreadId> = [];
+        const scannerSelectors: Array<AgentSessionImportSelector | undefined> = [];
+        const result = yield* runImport({
+          scanner: AgentSessionScanner.AgentSessionScanner.of({
+            scan: Effect.die("unused"),
+            recentThreads: (_root, _completed, selector) => {
+              scannerSelectors.push(selector);
+              return Stream.fromIterable(input.outcomes);
+            },
+          }),
+          engine: OrchestrationEngine.OrchestrationEngineService.of({
+            dispatch: (command) => Effect.sync(() => ({ sequence: commands.push(command) })),
+            readEvents: () => Stream.empty,
+            readThreadEvents: () => Stream.empty,
+            getThreadReplayStats: () => Effect.die("unused"),
+            streamDomainEvents: Stream.empty,
+            subscribeDomainEvents: Effect.succeed(Stream.empty),
+            latestSequence: Effect.succeed(0),
+          }),
+          directory: ProviderSessionDirectory.ProviderSessionDirectory.of({
+            upsert: (binding) => Effect.sync(() => void bindings.push(binding)),
+            getProvider: () => Effect.die("unused"),
+            recordImportedTranscript: ({ threadId }) =>
+              Effect.sync(() => void recorded.push(threadId)),
+            getBinding: (threadId) => Effect.succeed(input.getBinding?.(threadId) ?? Option.none()),
+            listThreadIds: () => Effect.die("unused"),
+            listBindings: () => Effect.die("unused"),
+          }),
+          snapshots: makeSnapshotsLayer({ project: makeProject() }),
+          session: input.session,
+        }).pipe(Effect.result);
+        return { result, commands, bindings, recorded, scannerSelectors };
+      });
+
+    const failureTag = (result: { readonly _tag: string; readonly failure?: unknown }) =>
+      result._tag === "Failure" ? (result.failure as { readonly _tag: string })._tag : null;
+
+    it.effect("imports exactly the selected session with its own cursor and history", () =>
+      Effect.gen(function* () {
+        const run = yield* recordingImport({
+          outcomes: [
+            makeThreadOutcome(codexSession("codex-a")),
+            makeThreadOutcome(codexSession("codex-b")),
+            makeThreadOutcome(makeThread("claudeAgent")),
+          ],
+          session: { provider: "codex", providerSessionId: "codex-b" },
+        });
+
+        expect(run.result).toMatchObject({
+          _tag: "Success",
+          success: { importedCount: 1, skippedCount: 0, importedThreadIds: [selectedId] },
+        });
+        expect(run.scannerSelectors).toEqual([{ provider: "codex", providerSessionId: "codex-b" }]);
+        expect(
+          run.commands.map((command) => [
+            command.type,
+            "threadId" in command ? command.threadId : null,
+          ]),
+        ).toEqual([
+          ["thread.create", selectedId],
+          ["thread.history.import", selectedId],
+        ]);
+        expect(
+          run.commands.flatMap((command) =>
+            command.type === "thread.history.import"
+              ? command.messages.map((message) => message.messageId)
+              : [],
+          ),
+        ).toEqual([`${selectedId}:000000`, `${selectedId}:000001`]);
+        expect(run.bindings).toMatchObject([
+          { threadId: selectedId, provider: "codex", resumeCursor: { threadId: "codex-b" } },
+        ]);
+        expect(run.bindings).toHaveLength(1);
+        expect(run.recorded).toEqual([selectedId]);
+      }),
+    );
+
+    it.effect("leaves a selected session that is bound to a live thread untouched", () =>
+      Effect.gen(function* () {
+        const run = yield* recordingImport({
+          outcomes: [makeThreadOutcome(codexSession("codex-b"))],
+          session: { provider: "codex", providerSessionId: "codex-b" },
+          getBinding: (threadId) =>
+            threadId === selectedId
+              ? Option.some({
+                  threadId,
+                  provider: ProviderDriverKind.make("codex"),
+                  providerInstanceId: ProviderInstanceId.make("codex"),
+                  status: "running",
+                  resumeCursor: { threadId: "live-codex-b" },
+                })
+              : Option.none(),
+        });
+
+        expect(run.result).toMatchObject({
+          _tag: "Success",
+          success: { importedCount: 0, skippedCount: 1, importedThreadIds: [] },
+        });
+        expect(run.commands).toEqual([]);
+        expect(run.bindings).toEqual([]);
+        expect(run.recorded).toEqual([]);
+      }),
+    );
+
+    it.effect("never widens an unmatched or mismatched selector to the whole project", () =>
+      Effect.gen(function* () {
+        const selectors: ReadonlyArray<AgentSessionImportSelector> = [
+          { provider: "codex", providerSessionId: "codex-missing" },
+          { provider: "claudeAgent", providerSessionId: "codex-b" },
+          {
+            provider: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex-work"),
+            providerSessionId: "codex-b",
+          },
+        ];
+        for (const session of selectors) {
+          const run = yield* recordingImport({
+            outcomes: [
+              makeThreadOutcome(codexSession("codex-a")),
+              makeThreadOutcome(codexSession("codex-b")),
+              makeThreadOutcome(makeThread("claudeAgent")),
+            ],
+            session,
+          });
+          expect(failureTag(run.result)).toBe("AgentSessionImportSessionNotFoundError");
+          expect(run.commands).toEqual([]);
+          expect(run.bindings).toEqual([]);
+          expect(run.recorded).toEqual([]);
+        }
+      }),
+    );
+
+    it.effect("asks for the instance when the id exists under two instances", () =>
+      Effect.gen(function* () {
+        const outcomes = [
+          makeThreadOutcome(codexSession("codex-b")),
+          makeThreadOutcome(codexSession("codex-b", "codex-work")),
+        ];
+        const ambiguous = yield* recordingImport({
+          outcomes,
+          session: { provider: "codex", providerSessionId: "codex-b" },
+        });
+        expect(ambiguous.result).toMatchObject({
+          _tag: "Failure",
+          failure: {
+            _tag: "AgentSessionImportSessionAmbiguousError",
+            providerInstanceIds: ["codex", "codex-work"],
+          },
+        });
+        expect(ambiguous.commands).toEqual([]);
+        expect(ambiguous.bindings).toEqual([]);
+
+        const qualified = yield* recordingImport({
+          outcomes,
+          session: {
+            provider: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex-work"),
+            providerSessionId: "codex-b",
+          },
+        });
+        expect(qualified.result).toMatchObject({
+          _tag: "Success",
+          success: {
+            importedCount: 1,
+            skippedCount: 0,
+            importedThreadIds: ["import:codex-work:codex-b"],
+          },
+        });
+        expect(qualified.bindings).toMatchObject([{ threadId: "import:codex-work:codex-b" }]);
+        expect(qualified.bindings).toHaveLength(1);
+      }),
+    );
+
+    it.effect("repeating a selected import writes nothing new", () =>
+      Effect.gen(function* () {
+        const source = makeThreadOutcome(codexSession("codex-b")).source;
+        const run = yield* recordingImport({
+          outcomes: [
+            { _tag: "AlreadyImported", source },
+            makeThreadOutcome(codexSession("codex-a")),
+          ],
+          session: { provider: "codex", providerSessionId: "codex-b" },
+        });
+        expect(run.result).toMatchObject({
+          _tag: "Success",
+          success: { importedCount: 1, skippedCount: 0, importedThreadIds: [selectedId] },
+        });
+        expect(run.commands).toEqual([]);
+        expect(run.bindings).toEqual([]);
       }),
     );
   });
@@ -1209,6 +1426,212 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
           (message) => message.text,
         ),
       ).toEqual(["Continue while import waits"]);
+    }),
+  );
+
+  it.effect("imports one selected session end to end without touching anything else", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+      const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+      yield* TestClock.setTime(nowMs);
+      const fixtureDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-import-selected-",
+      });
+      const workspaceRoot = path.join(fixtureDir, "workspace");
+      const claudeHomePath = path.join(fixtureDir, "claude");
+      const codexHomePath = path.join(fixtureDir, "codex");
+      const codexDir = path.join(codexHomePath, "sessions", "2026", "08", "24");
+      const claudeDir = path.join(claudeHomePath, "projects", "-workspace");
+      yield* fileSystem.makeDirectory(workspaceRoot);
+      yield* fileSystem.makeDirectory(codexDir, { recursive: true });
+      yield* fileSystem.makeDirectory(claudeDir, { recursive: true });
+
+      // Synthetic transcripts only: three Codex and two Claude sessions in the project.
+      const transcriptFiles: Array<string> = [];
+      const writeFixture = Effect.fn("writeSelectedImportFixture")(function* (
+        filePath: string,
+        records: ReadonlyArray<unknown>,
+        ageSeconds: number,
+      ) {
+        yield* fileSystem.writeFileString(
+          filePath,
+          records.map((record) => encodeTranscriptRecord(record)).join("\n"),
+        );
+        const seconds = nowMs / 1_000 - ageSeconds;
+        yield* fileSystem.utimes(filePath, seconds, seconds);
+        transcriptFiles.push(filePath);
+      });
+      const codexIds = ["codex-a", "codex-b", "codex-live"] as const;
+      for (const [index, id] of codexIds.entries()) {
+        yield* writeFixture(
+          path.join(codexDir, `rollout-${id}.jsonl`),
+          [
+            { type: "session_meta", payload: { id, cwd: workspaceRoot } },
+            { type: "event_msg", payload: { type: "user_message", message: `Prompt ${id}` } },
+          ],
+          60 * (index + 1),
+        );
+      }
+      const claudeIds = [
+        "123e4567-e89b-42d3-a456-426614174001",
+        "123e4567-e89b-42d3-a456-426614174002",
+      ] as const;
+      for (const [index, id] of claudeIds.entries()) {
+        yield* writeFixture(
+          path.join(claudeDir, `${id}.jsonl`),
+          [
+            {
+              type: "user",
+              cwd: workspaceRoot,
+              sessionId: id,
+              timestamp: "2026-08-24T10:00:00.000Z",
+              message: { role: "user", content: `Claude prompt ${index}` },
+            },
+            {
+              type: "assistant",
+              sessionId: id,
+              timestamp: "2026-08-24T10:01:00.000Z",
+              message: { role: "assistant", content: [{ type: "text", text: "Done" }] },
+            },
+          ],
+          600 * (index + 1),
+        );
+      }
+      const sourceBytes = new Map<string, string>();
+      for (const filePath of transcriptFiles) {
+        sourceBytes.set(filePath, yield* fileSystem.readFileString(filePath));
+      }
+
+      const projectId = ProjectId.make("project-selected-import");
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("create-selected-import-project"),
+        projectId,
+        title: "Selected import",
+        workspaceRoot,
+        defaultModelSelection: null,
+        createdAt: "2026-08-24T09:00:00.000Z",
+      });
+      // codex-live is already bound to a live thread with work of its own.
+      const liveThreadId = ThreadId.make("import:codex:codex-live");
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-live-thread"),
+        threadId: liveThreadId,
+        projectId,
+        title: "Live work",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "default" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-08-24T11:00:00.000Z",
+      });
+      yield* directory.upsert({
+        threadId: liveThreadId,
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        status: "running",
+        resumeCursor: { threadId: "codex-live-current" },
+        runtimePayload: { cwd: workspaceRoot },
+      });
+      const liveBindingBefore = Option.getOrThrow(yield* directory.getBinding(liveThreadId));
+      const liveThreadBefore = Option.getOrThrow(
+        yield* snapshots.getThreadDetailById(liveThreadId),
+      );
+
+      const settingsLayer = ServerSettingsService.layerTest({
+        providers: {
+          claudeAgent: { homePath: claudeHomePath },
+          codex: { homePath: codexHomePath },
+        },
+      });
+      const runImportWith = (session?: AgentSessionImportSelector) =>
+        importRecentAgentThreads({ projectId, ...(session ? { session } : {}) }).pipe(
+          Effect.provide(Layer.fresh(AgentSessionScanner.layer).pipe(Layer.provide(settingsLayer))),
+        );
+      const selectedThreadId = ThreadId.make("import:codex:codex-b");
+      const bindingIds = Effect.map(directory.listBindings(), (bindings) =>
+        bindings.map((binding) => binding.threadId).toSorted(),
+      );
+      const bindingsBefore = yield* bindingIds;
+      const sequenceBefore = yield* engine.latestSequence;
+
+      const first = yield* runImportWith({ provider: "codex", providerSessionId: "codex-b" });
+      expect(first).toEqual({
+        importedCount: 1,
+        skippedCount: 0,
+        importedThreadIds: [selectedThreadId],
+      });
+      const events = Array.from(yield* Stream.runCollect(engine.readEvents(sequenceBefore)));
+      expect(new Set(events.map((event) => event.aggregateId))).toEqual(
+        new Set([selectedThreadId]),
+      );
+      expect(events.map((event) => event.type)).toContain("thread.created");
+      expect(
+        events.filter(
+          (event) => event.type === "thread.deleted" || event.type === "thread.archived",
+        ),
+      ).toEqual([]);
+      expect(
+        Option.getOrThrow(yield* snapshots.getThreadDetailById(selectedThreadId)).messages.map(
+          (message) => message.text,
+        ),
+      ).toEqual(["Prompt codex-b"]);
+      expect(Option.getOrThrow(yield* directory.getBinding(selectedThreadId))).toMatchObject({
+        provider: "codex",
+        status: "stopped",
+        resumeCursor: { threadId: "codex-b" },
+      });
+      expect(yield* bindingIds).toEqual([...bindingsBefore, selectedThreadId].toSorted());
+      for (const unrelated of [
+        "import:codex:codex-a",
+        ...claudeIds.map((id) => `import:claudeAgent:${id}`),
+      ]) {
+        expect(Option.isNone(yield* snapshots.getThreadDetailById(ThreadId.make(unrelated)))).toBe(
+          true,
+        );
+      }
+
+      // Repeating it, and selectors that match nothing or the live session, write nothing.
+      const sequenceAfterFirst = yield* engine.latestSequence;
+      expect(yield* runImportWith({ provider: "codex", providerSessionId: "codex-b" })).toEqual(
+        first,
+      );
+      for (const session of [
+        { provider: "codex", providerSessionId: "codex-missing" },
+        { provider: "claudeAgent", providerSessionId: "codex-a" },
+      ] satisfies ReadonlyArray<AgentSessionImportSelector>) {
+        const error = yield* Effect.flip(runImportWith(session));
+        expect(error._tag).toBe("AgentSessionImportSessionNotFoundError");
+      }
+      expect(yield* runImportWith({ provider: "codex", providerSessionId: "codex-live" })).toEqual({
+        importedCount: 0,
+        skippedCount: 1,
+        importedThreadIds: [],
+      });
+      expect(yield* engine.latestSequence).toBe(sequenceAfterFirst);
+      expect(yield* bindingIds).toEqual([...bindingsBefore, selectedThreadId].toSorted());
+      expect(Option.getOrThrow(yield* directory.getBinding(liveThreadId))).toEqual(
+        liveBindingBefore,
+      );
+      expect(Option.getOrThrow(yield* snapshots.getThreadDetailById(liveThreadId))).toEqual(
+        liveThreadBefore,
+      );
+
+      // An unfiltered caller still imports every other eligible session.
+      expect(yield* runImportWith()).toEqual({ importedCount: 4, skippedCount: 1 });
+      expect(Option.getOrThrow(yield* directory.getBinding(liveThreadId))).toEqual(
+        liveBindingBefore,
+      );
+
+      for (const [filePath, contents] of sourceBytes) {
+        expect(yield* fileSystem.readFileString(filePath)).toBe(contents);
+      }
     }),
   );
 });

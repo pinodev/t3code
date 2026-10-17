@@ -1,5 +1,11 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 /** Coding agent home directories the scanner knows how to read. */
@@ -73,9 +79,27 @@ export const AgentSessionScanResult = Schema.Struct({
 });
 export type AgentSessionScanResult = typeof AgentSessionScanResult.Type;
 
+/**
+ * Names exactly one provider session to import. The provider (and, when the same
+ * id could exist under several configured instances, the instance) qualifies the
+ * id, so a Codex and a Claude session can never be confused.
+ */
+export const AgentSessionImportSelector = Schema.Struct({
+  provider: AgentSessionSource,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  providerSessionId: TrimmedNonEmptyString,
+});
+export type AgentSessionImportSelector = typeof AgentSessionImportSelector.Type;
+
+/**
+ * Without `session` every eligible recent transcript of the project is imported.
+ * With it only that session is; a selector that matches nothing fails without
+ * importing anything rather than widening to the whole project.
+ */
 export const AgentSessionImportInput = Schema.Struct({
   projectId: ProjectId,
   expectedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  session: Schema.optional(AgentSessionImportSelector),
 });
 export type AgentSessionImportInput = typeof AgentSessionImportInput.Type;
 
@@ -97,9 +121,33 @@ export class AgentSessionImportProjectChangedError extends Schema.TaggedError<Ag
   }
 }
 
+export class AgentSessionImportSessionNotFoundError extends Schema.TaggedError<AgentSessionImportSessionNotFoundError>()(
+  "AgentSessionImportSessionNotFoundError",
+  { projectId: ProjectId, session: AgentSessionImportSelector },
+) {
+  override get message(): string {
+    return `No recent ${this.session.provider} session '${this.session.providerSessionId}' was found for project '${this.projectId}'. Nothing was imported.`;
+  }
+}
+
+export class AgentSessionImportSessionAmbiguousError extends Schema.TaggedError<AgentSessionImportSessionAmbiguousError>()(
+  "AgentSessionImportSessionAmbiguousError",
+  {
+    projectId: ProjectId,
+    session: AgentSessionImportSelector,
+    providerInstanceIds: Schema.Array(ProviderInstanceId),
+  },
+) {
+  override get message(): string {
+    return `${this.session.provider} session '${this.session.providerSessionId}' exists under several provider instances (${this.providerInstanceIds.join(", ")}). Name the instance; nothing was imported.`;
+  }
+}
+
 export const AgentSessionImportResult = Schema.Struct({
   importedCount: NonNegativeInt,
   skippedCount: NonNegativeInt,
+  /** Set for a selected-session import: the thread the session now lives in. */
+  importedThreadIds: Schema.optional(Schema.Array(ThreadId)),
 });
 export type AgentSessionImportResult = typeof AgentSessionImportResult.Type;
 

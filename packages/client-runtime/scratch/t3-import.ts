@@ -29,8 +29,13 @@ function normalizePath(p: string): string {
 }
 
 function printUsage() {
-  console.error("usage: node t3-import.ts <projectId> [--session <uuid>]");
-  console.error("       node t3-import.ts --cwd <path> [--session <uuid>]");
+  console.error(
+    "usage: node t3-import.ts <projectId> [--session <id> --provider <codex|claudeAgent> [--instance <id>]]",
+  );
+  console.error(
+    "       node t3-import.ts --cwd <path> [--session <id> --provider <codex|claudeAgent> [--instance <id>]]",
+  );
+  console.error("Without --session every recent session of the project is imported.");
 }
 
 // Parse argv: either a bare projectId, or --cwd <path>, plus optional --session <uuid>.
@@ -38,12 +43,18 @@ const args = process.argv.slice(2);
 let projectId = "";
 let cwdArg = "";
 let sessionId = "";
+let providerArg = "";
+let instanceArg = "";
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === "--cwd") {
     cwdArg = args[++i] ?? "";
   } else if (a === "--session") {
     sessionId = args[++i] ?? "";
+  } else if (a === "--provider") {
+    providerArg = args[++i] ?? "";
+  } else if (a === "--instance") {
+    instanceArg = args[++i] ?? "";
   } else if (!a.startsWith("--") && !projectId) {
     projectId = a;
   }
@@ -51,6 +62,17 @@ for (let i = 0; i < args.length; i++) {
 
 const token = readToken();
 if (!token || (!projectId && !cwdArg)) {
+  printUsage();
+  process.exit(2);
+}
+// A session is only ever named together with its provider; the server rejects
+// anything else without importing, and so does this script before connecting.
+const selectsSession = args.includes("--session");
+if (
+  selectsSession &&
+  (sessionId.trim() === "" || (providerArg !== "codex" && providerArg !== "claudeAgent"))
+) {
+  console.error("FAILED: --session needs a session id and --provider codex|claudeAgent");
   printUsage();
   process.exit(2);
 }
@@ -98,16 +120,29 @@ const protocolLayer = Layer.effect(
 
 const program = Effect.gen(function* () {
   const client = yield* RpcClient.make(WsRpcGroup);
-  const result = yield* client[WS_METHODS.agentSessionsImport]({ projectId } as any);
+  const result = yield* client[WS_METHODS.agentSessionsImport]({
+    projectId,
+    ...(selectsSession
+      ? {
+          session: {
+            provider: providerArg,
+            providerSessionId: sessionId.trim(),
+            ...(instanceArg ? { providerInstanceId: instanceArg } : {}),
+          },
+        }
+      : {}),
+  } as any);
   console.log("import result:", JSON.stringify(result));
+  return result as { readonly importedThreadIds?: ReadonlyArray<string> };
 }).pipe(Effect.scoped, Effect.provide(protocolLayer));
 
-await Effect.runPromise(program as any).catch((e) => {
+const importResult = await Effect.runPromise(program as any).catch((e) => {
   console.error("FAILED:", e);
   process.exitCode = 1;
+  return undefined;
 });
-if (sessionId && (process.exitCode ?? 0) === 0) {
-  const threadId = `import:claudeAgent:${sessionId}`;
+// The server names the thread it imported into; nothing is unsettled when it imported none.
+for (const threadId of (importResult as any)?.importedThreadIds ?? []) {
   console.log(`thread: ${threadId}`);
   // thread.history.import settles the thread (imported history counts as past work); a fork is live work.
   const res2 = await fetch(`${origin}/api/orchestration/dispatch`, {

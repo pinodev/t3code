@@ -6,6 +6,8 @@ import {
   DEFAULT_RUNTIME_MODE,
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
+  AgentSessionImportSessionAmbiguousError,
+  AgentSessionImportSessionNotFoundError,
   AgentSessionSource,
   AgentSessionScanError,
   isImportedAgentSessionMessageId,
@@ -128,15 +130,17 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
     .pipe(
       Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
     );
+  const selector = input.session;
   const threads = scanner.recentThreads(
     workspaceRoot,
     completedSources.map((entry) => entry.source),
+    selector,
   );
   const importedThreadIds = new Set<ThreadId>();
   let importedCount = 0;
   let skippedCount = 0;
 
-  yield* Stream.runForEach(threads, (outcome) =>
+  const handleOutcome = (outcome: AgentSessionScanner.AgentSessionRecentThread) =>
     Effect.gen(function* () {
       if (outcome._tag === "Skipped") {
         skippedCount += 1;
@@ -290,8 +294,43 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
       } else {
         skippedCount += 1;
       }
-    }),
-  );
+    });
 
-  return { importedCount, skippedCount } satisfies AgentSessionImportResult;
+  if (selector === undefined) {
+    yield* Stream.runForEach(threads, handleOutcome);
+    return { importedCount, skippedCount } satisfies AgentSessionImportResult;
+  }
+
+  // A selected import reads the session's outcomes before writing anything, so
+  // an unmatched or ambiguous selector leaves every thread and binding as it was
+  // instead of widening to the whole project.
+  const outcomes = Array.from(yield* Stream.runCollect(threads));
+  const matching = outcomes.flatMap((outcome) =>
+    outcome._tag !== "Skipped" &&
+    AgentSessionScanner.agentSessionMatchesSelector(outcome.source, selector)
+      ? [outcome]
+      : [],
+  );
+  const providerInstanceIds = [
+    ...new Set(matching.map((outcome) => outcome.source.providerInstanceId)),
+  ];
+  if (providerInstanceIds.length === 0) {
+    return yield* new AgentSessionImportSessionNotFoundError({
+      projectId: input.projectId,
+      session: selector,
+    });
+  }
+  if (providerInstanceIds.length > 1) {
+    return yield* new AgentSessionImportSessionAmbiguousError({
+      projectId: input.projectId,
+      session: selector,
+      providerInstanceIds,
+    });
+  }
+  yield* Effect.forEach(matching, handleOutcome, { discard: true });
+  return {
+    importedCount,
+    skippedCount,
+    importedThreadIds: [...importedThreadIds],
+  } satisfies AgentSessionImportResult;
 });

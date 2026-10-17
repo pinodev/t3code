@@ -22,6 +22,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
+  type AgentSessionImportSelector,
   type AgentSessionImportSource,
   type AgentSessionProjectCandidate,
   type AgentSessionProjectGit,
@@ -178,6 +179,19 @@ export type AgentSessionRecentThread =
   | { readonly _tag: "Duplicate"; readonly source: AgentSessionImportSource }
   | { readonly _tag: "Skipped" };
 
+/** True when an import source is the session the selector names. */
+export function agentSessionMatchesSelector(
+  source: Pick<AgentSessionImportSource, "provider" | "providerInstanceId" | "providerSessionId">,
+  selector: AgentSessionImportSelector,
+): boolean {
+  return (
+    source.provider === selector.provider &&
+    source.providerSessionId === selector.providerSessionId &&
+    (selector.providerInstanceId === undefined ||
+      source.providerInstanceId === selector.providerInstanceId)
+  );
+}
+
 /** Service tag for agent session discovery. */
 export class AgentSessionScanner extends Context.Service<
   AgentSessionScanner,
@@ -189,9 +203,15 @@ export class AgentSessionScanner extends Context.Service<
      * error directly — there is no server-local context worth wrapping.
      */
     readonly scan: Effect.Effect<AgentSessionScanResult, AgentSessionScanError>;
+    /**
+     * With a selector, only that session's outcomes are emitted, and its
+     * transcripts are read first so unrelated files cannot use up the import
+     * budget before it is reached.
+     */
     readonly recentThreads: (
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
+      selector?: AgentSessionImportSelector,
     ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError>;
   }
 >()("t3/project/AgentSessionScanner") {}
@@ -1328,6 +1348,7 @@ export const make = Effect.gen(function* () {
   const prepareRecentThreads = Effect.fn("AgentSessionScanner.prepareRecentThreads")(function* (
     workspaceRoot: string,
     completedSources: ReadonlyArray<AgentSessionImportSource>,
+    selector: AgentSessionImportSelector | undefined,
   ) {
     const root = path.resolve(expandHomePath(workspaceRoot));
     const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
@@ -1344,6 +1365,14 @@ export const make = Effect.gen(function* () {
       readonly transcript: RawCandidate["transcripts"][number] & { readonly mtimeMs: number };
     }> = [];
     for (const candidate of candidates) {
+      if (
+        selector !== undefined &&
+        (candidate.source !== selector.provider ||
+          (selector.providerInstanceId !== undefined &&
+            candidate.providerInstanceId !== selector.providerInstanceId))
+      ) {
+        continue;
+      }
       const expanded = expandHomePath(candidate.cwd.trim());
       if (!path.isAbsolute(expanded)) continue;
       const resolved = path.resolve(expanded);
@@ -1364,7 +1393,14 @@ export const make = Effect.gen(function* () {
       }
     }
 
+    // Claude names transcripts after the session and Codex rollouts end with it,
+    // so a selected session's files sort ahead of everything else.
+    const namesSelected = (filePath: string) =>
+      selector !== undefined &&
+      path.basename(filePath, ".jsonl").endsWith(selector.providerSessionId);
     eligibleTranscripts.sort((left, right) => {
+      const leftSelected = namesSelected(left.transcript.filePath);
+      if (leftSelected !== namesSelected(right.transcript.filePath)) return leftSelected ? -1 : 1;
       if (left.transcript.mtimeMs !== right.transcript.mtimeMs) {
         return right.transcript.mtimeMs - left.transcript.mtimeMs;
       }
@@ -1375,6 +1411,8 @@ export const make = Effect.gen(function* () {
       completedSources,
       (source) => `${source.providerInstanceId}\0${source.filePath}`,
     );
+    const matchesSelector = (source: AgentSessionImportSource) =>
+      selector === undefined || agentSessionMatchesSelector(source, selector);
     const importedSessions = new Set<string>();
     let bytesRemaining = MAX_IMPORT_BYTES;
     let transcriptsRemaining = MAX_IMPORT_TRANSCRIPTS;
@@ -1401,6 +1439,7 @@ export const make = Effect.gen(function* () {
               source.provider === candidate.source && sameTranscriptIdentity(source, identity),
           );
           if (completedSource !== undefined) {
+            if (!matchesSelector(completedSource)) return Option.none<AgentSessionRecentThread>();
             const sessionKey = `${completedSource.providerInstanceId}\0${completedSource.providerSessionId}`;
             if (importedSessions.has(sessionKey)) return Option.none<AgentSessionRecentThread>();
             importedSessions.add(sessionKey);
@@ -1467,6 +1506,7 @@ export const make = Effect.gen(function* () {
             providerInstanceId: parsedThread.providerInstanceId,
             providerSessionId: parsedThread.providerSessionId,
           };
+          if (!matchesSelector(source)) return Option.none<AgentSessionRecentThread>();
           const sessionKey = `${parsedThread.providerInstanceId}\0${parsedThread.providerSessionId}`;
           if (importedSessions.has(sessionKey)) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Duplicate", source });
@@ -1487,7 +1527,8 @@ export const make = Effect.gen(function* () {
   const recentThreads: AgentSessionScanner["Service"]["recentThreads"] = (
     workspaceRoot,
     completedSources = [],
-  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
+    selector,
+  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources, selector));
 
   return AgentSessionScanner.of({ scan, recentThreads });
 });

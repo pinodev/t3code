@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  type AgentSessionImportSelector,
   type OrchestrationProjectShell,
   ProjectId,
   ProviderDriverKind,
@@ -107,16 +108,26 @@ const runScan = (input: ScannerTestInput) =>
     return yield* scanner.scan;
   }).pipe(Effect.provide(makeScannerTestLayer(input)));
 
-const runRecentThreadOutcomes = (input: ScannerTestInput & { readonly workspaceRoot: string }) =>
+const runRecentThreadOutcomes = (
+  input: ScannerTestInput & {
+    readonly workspaceRoot: string;
+    readonly selector?: AgentSessionImportSelector;
+  },
+) =>
   Effect.gen(function* () {
     const scanner = yield* AgentSessionScanner.AgentSessionScanner;
-    return yield* scanner.recentThreads(input.workspaceRoot).pipe(
+    return yield* scanner.recentThreads(input.workspaceRoot, [], input.selector).pipe(
       Stream.runCollect,
       Effect.map((outcomes) => Array.from(outcomes)),
     );
   }).pipe(Effect.provide(makeScannerTestLayer(input)));
 
-const runRecentThreads = (input: ScannerTestInput & { readonly workspaceRoot: string }) =>
+const runRecentThreads = (
+  input: ScannerTestInput & {
+    readonly workspaceRoot: string;
+    readonly selector?: AgentSessionImportSelector;
+  },
+) =>
   runRecentThreadOutcomes(input).pipe(
     Effect.map((outcomes) =>
       outcomes.flatMap((outcome) => (outcome._tag === "Importable" ? [outcome.thread] : [])),
@@ -1505,6 +1516,71 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         expect(threads.map((thread) => thread.messages.map((message) => message.text))).toEqual([
           ["Review this code", "Looks good"],
           ["Fix the project", "Done"],
+        ]);
+      }),
+    );
+
+    it.effect("emits only the selected session, qualified by provider and instance", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const codexDir = path.join(codexHomePath, "sessions", "2026", "08", "24");
+        for (const [index, id] of ["codex-new", "codex-old"].entries()) {
+          yield* writeTranscript({
+            filePath: path.join(codexDir, `rollout-${id}.jsonl`),
+            contents: [
+              encodeTranscriptRecord({ type: "session_meta", payload: { id, cwd: workspace } }),
+              encodeTranscriptRecord({
+                type: "event_msg",
+                payload: { type: "user_message", message: `Prompt ${id}` },
+              }),
+            ].join("\n"),
+            mtimeMs: nowMs - (index + 1) * 60 * 60 * 1000,
+          });
+        }
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-selected", "claude-one.jsonl"),
+          contents: `${encodeTranscriptRecord({
+            type: "user",
+            cwd: workspace,
+            sessionId: "claude-one",
+            timestamp: "2026-08-23T12:00:00.000Z",
+            message: { role: "user", content: "Claude prompt" },
+          })}\n`,
+          mtimeMs: nowMs - 30 * 60 * 1000,
+        });
+        const homes = { claudeHomePath, codexHomePath, workspaceRoot: workspace };
+
+        const selected = yield* runRecentThreadOutcomes({
+          ...homes,
+          selector: { provider: "codex", providerSessionId: "codex-old" },
+        });
+        expect(
+          selected.map((outcome) =>
+            outcome._tag === "Skipped"
+              ? "Skipped"
+              : `${outcome._tag}:${outcome.source.providerSessionId}`,
+          ),
+        ).toEqual(["Importable:codex-old"]);
+
+        for (const selector of [
+          { provider: "claudeAgent", providerSessionId: "codex-old" },
+          {
+            provider: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex-work"),
+            providerSessionId: "codex-old",
+          },
+        ] satisfies ReadonlyArray<AgentSessionImportSelector>) {
+          expect(yield* runRecentThreadOutcomes({ ...homes, selector })).toEqual([]);
+        }
+        expect((yield* runRecentThreads(homes)).map((thread) => thread.providerSessionId)).toEqual([
+          "claude-one",
+          "codex-new",
+          "codex-old",
         ]);
       }),
     );

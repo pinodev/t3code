@@ -33,6 +33,8 @@ import {
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
   AgentSessionImportResult,
+  AgentSessionImportSessionAmbiguousError,
+  AgentSessionImportSessionNotFoundError,
   AgentSessionScanInput,
   AgentSessionScanResult,
   AgentSessionScanError,
@@ -945,6 +947,8 @@ const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
   error: Schema.Union([
     AgentSessionImportProjectChangedError,
     AgentSessionImportProjectNotFoundError,
+    AgentSessionImportSessionAmbiguousError,
+    AgentSessionImportSessionNotFoundError,
     AgentSessionScanError,
     EnvironmentAuthorizationError,
   ]),
