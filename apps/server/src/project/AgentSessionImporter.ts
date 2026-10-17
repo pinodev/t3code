@@ -7,6 +7,7 @@ import {
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
   AgentSessionImportSessionAmbiguousError,
+  AgentSessionImportSessionInUseError,
   AgentSessionImportSessionNotFoundError,
   AgentSessionSource,
   AgentSessionScanError,
@@ -17,6 +18,8 @@ import {
   ThreadId,
   type AgentSessionImportInput,
   type AgentSessionImportResult,
+  type AgentSessionImportSelectedInput,
+  type AgentSessionImportSelector,
   type OrchestrationThread,
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
@@ -98,9 +101,59 @@ function hasImportBlockingActivity(
   );
 }
 
+/**
+ * The provider session a binding resumes, in the cursor shape each importable
+ * provider writes: Codex keeps it in `threadId`, Claude in `resume` (its
+ * `threadId` is the T3 thread).
+ */
+function resumedProviderSessionId(
+  binding: ProviderSessionDirectory.ProviderRuntimeBinding,
+): string | null {
+  const cursor = binding.resumeCursor;
+  if (typeof cursor !== "object" || cursor === null) return null;
+  const value =
+    binding.provider === "codex"
+      ? "threadId" in cursor
+        ? cursor.threadId
+        : undefined
+      : binding.provider === "claudeAgent" && "resume" in cursor
+        ? cursor.resume
+        : undefined;
+  return typeof value === "string" ? value : null;
+}
+
 /** Import recent transcript text and persist the cursor needed to resume its provider session. */
-export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(function* (
+export const importRecentAgentThreads = (input: AgentSessionImportInput) =>
+  importAgentThreads(input, undefined).pipe(
+    // Only a selector can raise these; the unfiltered import never does.
+    Effect.catchTag(
+      [
+        "AgentSessionImportSessionAmbiguousError",
+        "AgentSessionImportSessionInUseError",
+        "AgentSessionImportSessionNotFoundError",
+      ],
+      (error) => Effect.die(error),
+    ),
+  );
+
+/**
+ * Import exactly the selected session. Nothing is written unless that one session
+ * is found under one provider instance and no other thread already continues it.
+ */
+export const importSelectedAgentThread = (input: AgentSessionImportSelectedInput) =>
+  importAgentThreads(
+    {
+      projectId: input.projectId,
+      ...(input.expectedWorkspaceRoot === undefined
+        ? {}
+        : { expectedWorkspaceRoot: input.expectedWorkspaceRoot }),
+    },
+    input.session,
+  );
+
+const importAgentThreads = Effect.fn("importAgentThreads")(function* (
   input: AgentSessionImportInput,
+  selector: AgentSessionImportSelector | undefined,
 ) {
   const scanner = yield* AgentSessionScanner.AgentSessionScanner;
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;
@@ -130,7 +183,6 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
     .pipe(
       Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
     );
-  const selector = input.session;
   const threads = scanner.recentThreads(
     workspaceRoot,
     completedSources.map((entry) => entry.source),
@@ -325,6 +377,33 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
       projectId: input.projectId,
       session: selector,
       providerInstanceIds,
+    });
+  }
+  // The import's own thread id may already hold this session (a retry); any other
+  // thread that resumes the same provider session owns it, running or stopped,
+  // and a second thread must never continue it.
+  const providerInstanceId = providerInstanceIds[0]!;
+  const targetThreadId = ThreadId.make(
+    `import:${providerInstanceId}:${selector.providerSessionId}`,
+  );
+  const bindings = yield* directory
+    .listBindings()
+    .pipe(
+      Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-bindings", cause })),
+    );
+  const ownerThreadIds = bindings.flatMap((binding) =>
+    binding.threadId !== targetThreadId &&
+    binding.provider === selector.provider &&
+    (binding.providerInstanceId ?? binding.provider) === providerInstanceId &&
+    resumedProviderSessionId(binding) === selector.providerSessionId
+      ? [binding.threadId]
+      : [],
+  );
+  if (ownerThreadIds.length > 0) {
+    return yield* new AgentSessionImportSessionInUseError({
+      projectId: input.projectId,
+      session: { ...selector, providerInstanceId },
+      ownerThreadIds,
     });
   }
   yield* Effect.forEach(matching, handleOutcome, { discard: true });

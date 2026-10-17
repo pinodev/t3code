@@ -1,7 +1,11 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { AgentSessionImportInput, AgentSessionScanResult } from "./agentSessions.ts";
+import {
+  AgentSessionImportInput,
+  AgentSessionImportSelectedInput,
+  AgentSessionScanResult,
+} from "./agentSessions.ts";
 
 const decodeScanResult = Schema.decodeUnknownSync(AgentSessionScanResult);
 
@@ -35,17 +39,21 @@ describe("AgentSessionScanResult", () => {
   });
 });
 
-describe("AgentSessionImportInput", () => {
-  const decode = Schema.decodeUnknownExit(AgentSessionImportInput);
+describe("agent session import inputs", () => {
+  const decodeUnfiltered = Schema.decodeUnknownExit(AgentSessionImportInput);
+  const decodeSelected = Schema.decodeUnknownExit(AgentSessionImportSelectedInput);
 
-  it("keeps older callers that send no session unfiltered", () => {
-    const decoded = decode({ projectId: "project-1" });
-    expect(decoded._tag).toBe("Success");
-    expect(decoded._tag === "Success" ? decoded.value.session : "failed").toBeUndefined();
+  it("keeps the unfiltered import input as it was", () => {
+    const decoded = decodeUnfiltered({ projectId: "project-1", expectedWorkspaceRoot: "/repo" });
+    expect(decoded._tag === "Success" ? decoded.value : decoded).toEqual({
+      projectId: "project-1",
+      expectedWorkspaceRoot: "/repo",
+    });
   });
 
-  it("rejects an empty, blank, or unknown-provider session selector", () => {
+  it("requires a provider-qualified session for a selected import", () => {
     for (const session of [
+      undefined,
       {},
       { provider: "codex" },
       { provider: "codex", providerSessionId: "" },
@@ -53,13 +61,10 @@ describe("AgentSessionImportInput", () => {
       { provider: "cursor", providerSessionId: "session-1" },
       { provider: "codex", providerInstanceId: "", providerSessionId: "session-1" },
     ]) {
-      expect(decode({ projectId: "project-1", session })._tag).toBe("Failure");
+      expect(decodeSelected({ projectId: "project-1", session })._tag).toBe("Failure");
     }
-  });
-
-  it("accepts a provider-qualified session selector", () => {
     expect(
-      decode({
+      decodeSelected({
         projectId: "project-1",
         session: { provider: "codex", providerInstanceId: "codex", providerSessionId: "session-1" },
       })._tag,

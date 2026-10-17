@@ -59,7 +59,7 @@ import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
-import { importRecentAgentThreads } from "./AgentSessionImporter.ts";
+import { importRecentAgentThreads, importSelectedAgentThread } from "./AgentSessionImporter.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
@@ -187,13 +187,15 @@ const runImport = (input: {
   readonly expectedWorkspaceRoot?: string;
   readonly session?: AgentSessionImportSelector;
 }) =>
-  importRecentAgentThreads({
-    projectId: PROJECT_ID,
-    ...(input.expectedWorkspaceRoot === undefined
-      ? {}
-      : { expectedWorkspaceRoot: input.expectedWorkspaceRoot }),
-    ...(input.session === undefined ? {} : { session: input.session }),
-  }).pipe(
+  (input.session === undefined
+    ? importRecentAgentThreads({
+        projectId: PROJECT_ID,
+        ...(input.expectedWorkspaceRoot === undefined
+          ? {}
+          : { expectedWorkspaceRoot: input.expectedWorkspaceRoot }),
+      })
+    : importSelectedAgentThread({ projectId: PROJECT_ID, session: input.session })
+  ).pipe(
     Effect.provideService(AgentSessionScanner.AgentSessionScanner, input.scanner),
     Effect.provideService(OrchestrationEngine.OrchestrationEngineService, input.engine),
     Effect.provideService(ProviderSessionDirectory.ProviderSessionDirectory, input.directory),
@@ -590,7 +592,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
               Effect.sync(() => void recorded.push(threadId)),
             getBinding: (threadId) => Effect.succeed(input.getBinding?.(threadId) ?? Option.none()),
             listThreadIds: () => Effect.die("unused"),
-            listBindings: () => Effect.die("unused"),
+            listBindings: () => Effect.succeed([]),
           }),
           snapshots: makeSnapshotsLayer({ project: makeProject() }),
           session: input.session,
@@ -1551,7 +1553,10 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
         },
       });
       const runImportWith = (session?: AgentSessionImportSelector) =>
-        importRecentAgentThreads({ projectId, ...(session ? { session } : {}) }).pipe(
+        (session
+          ? importSelectedAgentThread({ projectId, session })
+          : importRecentAgentThreads({ projectId })
+        ).pipe(
           Effect.provide(Layer.fresh(AgentSessionScanner.layer).pipe(Layer.provide(settingsLayer))),
         );
       const selectedThreadId = ThreadId.make("import:codex:codex-b");
@@ -1632,6 +1637,199 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
       for (const [filePath, contents] of sourceBytes) {
         expect(yield* fileSystem.readFileString(filePath)).toBe(contents);
       }
+    }),
+  );
+
+  it.effect("refuses a selected session that another thread already continues", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+      const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+      yield* TestClock.setTime(nowMs);
+      const fixtureDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-import-owned-",
+      });
+      const workspaceRoot = path.join(fixtureDir, "workspace");
+      const claudeHomePath = path.join(fixtureDir, "claude");
+      const codexHomePath = path.join(fixtureDir, "codex");
+      const codexDir = path.join(codexHomePath, "sessions", "2026", "08", "24");
+      const claudeDir = path.join(claudeHomePath, "projects", "-workspace");
+      yield* fileSystem.makeDirectory(workspaceRoot);
+      yield* fileSystem.makeDirectory(codexDir, { recursive: true });
+      yield* fileSystem.makeDirectory(claudeDir, { recursive: true });
+      const writeFixture = Effect.fn("writeOwnedImportFixture")(function* (
+        filePath: string,
+        records: ReadonlyArray<unknown>,
+        ageSeconds: number,
+      ) {
+        yield* fileSystem.writeFileString(
+          filePath,
+          records.map((record) => encodeTranscriptRecord(record)).join("\n"),
+        );
+        const seconds = nowMs / 1_000 - ageSeconds;
+        yield* fileSystem.utimes(filePath, seconds, seconds);
+      });
+      for (const [index, id] of ["codex-owned", "codex-free"].entries()) {
+        yield* writeFixture(
+          path.join(codexDir, `rollout-${id}.jsonl`),
+          [
+            { type: "session_meta", payload: { id, cwd: workspaceRoot } },
+            { type: "event_msg", payload: { type: "user_message", message: `Prompt ${id}` } },
+          ],
+          60 * (index + 1),
+        );
+      }
+      const claudeOwnedId = "123e4567-e89b-42d3-a456-426614174009";
+      yield* writeFixture(
+        path.join(claudeDir, `${claudeOwnedId}.jsonl`),
+        [
+          {
+            type: "user",
+            cwd: workspaceRoot,
+            sessionId: claudeOwnedId,
+            timestamp: "2026-08-24T10:00:00.000Z",
+            message: { role: "user", content: "Claude prompt" },
+          },
+        ],
+        600,
+      );
+
+      const projectId = ProjectId.make("project-owned-import");
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("create-owned-import-project"),
+        projectId,
+        title: "Owned import",
+        workspaceRoot,
+        defaultModelSelection: null,
+        createdAt: "2026-08-24T09:00:00.000Z",
+      });
+      const createThread = (threadId: ThreadId, instance: string) =>
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`create-${threadId}`),
+          threadId,
+          projectId,
+          title: `Owner ${threadId}`,
+          modelSelection: { instanceId: ProviderInstanceId.make(instance), model: "default" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: "2026-08-24T11:00:00.000Z",
+        });
+      // An ordinary T3 thread (UUID id) continues codex-owned.
+      const uuidOwner = ThreadId.make("6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b");
+      yield* createThread(uuidOwner, "codex");
+      const bindCodexOwner = (status: "running" | "stopped") =>
+        directory.upsert({
+          threadId: uuidOwner,
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          status,
+          resumeCursor: { threadId: "codex-owned" },
+          runtimePayload: { cwd: workspaceRoot },
+        });
+      // An opaque-id thread continues the Claude session (Claude keeps it in `resume`).
+      const opaqueOwner = ThreadId.make("mcp:fork:opaque-owner");
+      yield* createThread(opaqueOwner, "claudeAgent");
+      yield* directory.upsert({
+        threadId: opaqueOwner,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        status: "stopped",
+        resumeCursor: { threadId: opaqueOwner, resume: claudeOwnedId },
+      });
+      // The same textual id under another provider and another Codex instance owns nothing here.
+      const otherProvider = ThreadId.make("7a2e3d4c-5b6f-4071-9b8c-0d1e2f3a4b5c");
+      yield* createThread(otherProvider, "claudeAgent");
+      yield* directory.upsert({
+        threadId: otherProvider,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        status: "stopped",
+        resumeCursor: { threadId: otherProvider, resume: "codex-free" },
+      });
+      const otherInstance = ThreadId.make("8b3f4e5d-6c70-4182-8c9d-1e2f3a4b5c6d");
+      yield* createThread(otherInstance, "codex-work");
+      yield* directory.upsert({
+        threadId: otherInstance,
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex-work"),
+        status: "stopped",
+        resumeCursor: { threadId: "codex-free" },
+      });
+
+      const settingsLayer = ServerSettingsService.layerTest({
+        providers: {
+          claudeAgent: { homePath: claudeHomePath },
+          codex: { homePath: codexHomePath },
+        },
+      });
+      const importSelected = (session: AgentSessionImportSelector) =>
+        importSelectedAgentThread({ projectId, session }).pipe(
+          Effect.provide(Layer.fresh(AgentSessionScanner.layer).pipe(Layer.provide(settingsLayer))),
+        );
+      const bindingsSnapshot = Effect.map(directory.listBindings(), (bindings) =>
+        bindings
+          .map(({ lastSeenAt: _lastSeenAt, ...binding }) => binding)
+          .toSorted((left, right) => left.threadId.localeCompare(right.threadId)),
+      );
+      const expectRefused = Effect.fn("expectRefused")(function* (
+        session: AgentSessionImportSelector,
+        ownerThreadIds: ReadonlyArray<ThreadId>,
+      ) {
+        const sequenceBefore = yield* engine.latestSequence;
+        const bindingsBefore = yield* bindingsSnapshot;
+        const error = yield* Effect.flip(importSelected(session));
+        expect(error).toMatchObject({
+          _tag: "AgentSessionImportSessionInUseError",
+          ownerThreadIds,
+        });
+        expect(yield* engine.latestSequence).toBe(sequenceBefore);
+        expect(yield* bindingsSnapshot).toEqual(bindingsBefore);
+        expect(yield* snapshots.getImportedAgentSessionSources(projectId)).toEqual([]);
+        const target = ThreadId.make(`import:${session.provider}:${session.providerSessionId}`);
+        expect(Option.isNone(yield* snapshots.getThreadDetailById(target))).toBe(true);
+      });
+
+      yield* bindCodexOwner("running");
+      yield* expectRefused({ provider: "codex", providerSessionId: "codex-owned" }, [uuidOwner]);
+      yield* bindCodexOwner("stopped");
+      yield* expectRefused({ provider: "codex", providerSessionId: "codex-owned" }, [uuidOwner]);
+      yield* expectRefused({ provider: "claudeAgent", providerSessionId: claudeOwnedId }, [
+        opaqueOwner,
+      ]);
+
+      // An unused session still imports, despite the same id under another provider/instance,
+      // and repeating it is a no-op on the same target.
+      const freeThreadId = ThreadId.make("import:codex:codex-free");
+      const free = yield* importSelected({ provider: "codex", providerSessionId: "codex-free" });
+      expect(free).toEqual({
+        importedCount: 1,
+        skippedCount: 0,
+        importedThreadIds: [freeThreadId],
+      });
+      expect(Option.getOrThrow(yield* directory.getBinding(freeThreadId))).toMatchObject({
+        provider: "codex",
+        providerInstanceId: "codex",
+        resumeCursor: { threadId: "codex-free" },
+      });
+      const sequenceAfterFree = yield* engine.latestSequence;
+      expect(yield* importSelected({ provider: "codex", providerSessionId: "codex-free" })).toEqual(
+        free,
+      );
+      expect(yield* engine.latestSequence).toBe(sequenceAfterFree);
+      for (const owner of [uuidOwner, opaqueOwner, otherProvider, otherInstance]) {
+        expect(Option.isSome(yield* snapshots.getThreadDetailById(owner))).toBe(true);
+      }
+      expect(Option.getOrThrow(yield* directory.getBinding(uuidOwner))).toMatchObject({
+        status: "stopped",
+        resumeCursor: { threadId: "codex-owned" },
+      });
     }),
   );
 });

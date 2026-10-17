@@ -120,18 +120,18 @@ const protocolLayer = Layer.effect(
 
 const program = Effect.gen(function* () {
   const client = yield* RpcClient.make(WsRpcGroup);
-  const result = yield* client[WS_METHODS.agentSessionsImport]({
-    projectId,
-    ...(selectsSession
-      ? {
-          session: {
-            provider: providerArg,
-            providerSessionId: sessionId.trim(),
-            ...(instanceArg ? { providerInstanceId: instanceArg } : {}),
-          },
-        }
-      : {}),
-  } as any);
+  // A selected import has its own method so a server that predates it rejects the
+  // request; it never falls back to agentSessions.import, which imports everything.
+  const result = selectsSession
+    ? yield* client[WS_METHODS.agentSessionsImportSelected]({
+        projectId,
+        session: {
+          provider: providerArg,
+          providerSessionId: sessionId.trim(),
+          ...(instanceArg ? { providerInstanceId: instanceArg } : {}),
+        },
+      } as any)
+    : yield* client[WS_METHODS.agentSessionsImport]({ projectId } as any);
   console.log("import result:", JSON.stringify(result));
   return result as { readonly importedThreadIds?: ReadonlyArray<string> };
 }).pipe(Effect.scoped, Effect.provide(protocolLayer));

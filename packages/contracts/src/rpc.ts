@@ -33,7 +33,9 @@ import {
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
   AgentSessionImportResult,
+  AgentSessionImportSelectedInput,
   AgentSessionImportSessionAmbiguousError,
+  AgentSessionImportSessionInUseError,
   AgentSessionImportSessionNotFoundError,
   AgentSessionScanInput,
   AgentSessionScanResult,
@@ -290,6 +292,7 @@ export const WS_METHODS = {
   filesystemBrowse: "filesystem.browse",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
+  agentSessionsImportSelected: "agentSessions.importSelected",
   assetsCreateUrl: "assets.createUrl",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
   attachmentsDelete: "attachments.delete",
@@ -941,13 +944,25 @@ const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
   error: Schema.Union([AgentSessionScanError, EnvironmentAuthorizationError]),
 });
 
-const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
+export const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
   payload: AgentSessionImportInput,
   success: AgentSessionImportResult,
   error: Schema.Union([
     AgentSessionImportProjectChangedError,
     AgentSessionImportProjectNotFoundError,
+    AgentSessionScanError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+export const WsAgentSessionsImportSelectedRpc = Rpc.make(WS_METHODS.agentSessionsImportSelected, {
+  payload: AgentSessionImportSelectedInput,
+  success: AgentSessionImportResult,
+  error: Schema.Union([
+    AgentSessionImportProjectChangedError,
+    AgentSessionImportProjectNotFoundError,
     AgentSessionImportSessionAmbiguousError,
+    AgentSessionImportSessionInUseError,
     AgentSessionImportSessionNotFoundError,
     AgentSessionScanError,
     EnvironmentAuthorizationError,
@@ -1446,6 +1461,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemBrowseRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
+  WsAgentSessionsImportSelectedRpc,
   WsAssetsCreateUrlRpc,
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,

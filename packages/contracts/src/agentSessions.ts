@@ -91,17 +91,24 @@ export const AgentSessionImportSelector = Schema.Struct({
 });
 export type AgentSessionImportSelector = typeof AgentSessionImportSelector.Type;
 
-/**
- * Without `session` every eligible recent transcript of the project is imported.
- * With it only that session is; a selector that matches nothing fails without
- * importing anything rather than widening to the whole project.
- */
+/** Imports every eligible recent transcript of the project. */
 export const AgentSessionImportInput = Schema.Struct({
   projectId: ProjectId,
   expectedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
-  session: Schema.optional(AgentSessionImportSelector),
 });
 export type AgentSessionImportInput = typeof AgentSessionImportInput.Type;
+
+/**
+ * Imports exactly one session, through its own method: a server that predates
+ * it rejects the method instead of reading the request as a whole-project import.
+ * A selector that matches nothing fails without importing anything.
+ */
+export const AgentSessionImportSelectedInput = Schema.Struct({
+  projectId: ProjectId,
+  expectedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  session: AgentSessionImportSelector,
+});
+export type AgentSessionImportSelectedInput = typeof AgentSessionImportSelectedInput.Type;
 
 export class AgentSessionImportProjectNotFoundError extends Schema.TaggedError<AgentSessionImportProjectNotFoundError>()(
   "AgentSessionImportProjectNotFoundError",
@@ -143,6 +150,19 @@ export class AgentSessionImportSessionAmbiguousError extends Schema.TaggedError<
   }
 }
 
+export class AgentSessionImportSessionInUseError extends Schema.TaggedError<AgentSessionImportSessionInUseError>()(
+  "AgentSessionImportSessionInUseError",
+  {
+    projectId: ProjectId,
+    session: AgentSessionImportSelector,
+    ownerThreadIds: Schema.Array(ThreadId),
+  },
+) {
+  override get message(): string {
+    return `${this.session.provider} session '${this.session.providerSessionId}' already continues in thread ${this.ownerThreadIds.join(", ")}. Nothing was imported.`;
+  }
+}
+
 export const AgentSessionImportResult = Schema.Struct({
   importedCount: NonNegativeInt,
   skippedCount: NonNegativeInt,
@@ -154,7 +174,7 @@ export type AgentSessionImportResult = typeof AgentSessionImportResult.Type;
 export class AgentSessionScanError extends Schema.TaggedError<AgentSessionScanError>()(
   "AgentSessionScanError",
   {
-    operation: Schema.Literals(["read-settings", "read-projects"]),
+    operation: Schema.Literals(["read-settings", "read-projects", "read-bindings"]),
     cause: Schema.Defect(),
   },
 ) {
